@@ -7,7 +7,9 @@ mod sources;
 use clap::Parser;
 use cli::Cli;
 
+use lockfile::{LockedPlugin, Lockfile};
 use manifest::{Manifest, Minecraft, PluginSpec};
+use sources::modrinth;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -85,7 +87,44 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         cli::Commands::Lock => {
-            println!("Lock command not implemented yet");
+            // Load manifest
+            let manifest = Manifest::load()
+                .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
+
+            let mut lockfile = Lockfile::new();
+
+            // For each plugin, resolve version
+            for (name, plugin_spec) in manifest.plugins.iter() {
+                println!("Resolving {}...", name);
+
+                let (version, filename, url, sha256) = match plugin_spec.source.as_str() {
+                    "modrinth" => {
+                        modrinth::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref())
+                            .await?
+                    }
+                    _ => {
+                        anyhow::bail!("Unsupported source: {}", plugin_spec.source);
+                    }
+                };
+
+                lockfile.add_plugin(LockedPlugin {
+                    name: name.clone(),
+                    source: plugin_spec.source.clone(),
+                    version: version.clone(),
+                    file: filename.clone(),
+                    url: url.clone(),
+                    sha256: sha256.clone(),
+                });
+
+                println!("  → {} {}", name, version);
+            }
+
+            // Sort plugins by name
+            lockfile.sort_by_name();
+
+            // Save lockfile
+            lockfile.save()?;
+            println!("Locked {} plugin(s)", lockfile.plugin.len());
         }
         cli::Commands::Sync => {
             println!("Sync command not implemented yet");
