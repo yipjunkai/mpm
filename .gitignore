@@ -1,4 +1,6 @@
 /target
 
 # For local development
+plugins.lock
+plugins.toml
 plugins/
