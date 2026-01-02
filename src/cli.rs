@@ -26,4 +26,5 @@ pub enum Commands {
     Lock,
     Sync,
     Doctor,
+    Import,
 }

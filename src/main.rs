@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod doctor;
 mod error;
+mod import;
 mod lockfile;
 mod manifest;
 mod sources;
@@ -135,6 +136,9 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Doctor => {
             let exit_code = doctor::check_health()?;
             std::process::exit(exit_code);
+        }
+        cli::Commands::Import => {
+            import::import_plugins()?;
         }
     }
 

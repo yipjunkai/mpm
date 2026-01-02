@@ -1,8 +1,11 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
+use zip::CompressionMethod;
+use zip::write::{FileOptions, ZipWriter};
 
 fn run_command(args: &[&str], test_dir: &str) -> (bool, String, String) {
     // Use cargo run which will build if needed
@@ -831,4 +834,326 @@ fn test_sync_full_workflow() {
             plugin_path
         );
     }
+}
+
+// Helper function to create a test JAR file with plugin.yml
+fn create_test_jar(
+    jar_path: &Path,
+    plugin_name: &str,
+    plugin_version: Option<&str>,
+) -> std::io::Result<()> {
+    let file = fs::File::create(jar_path)?;
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::<()>::default().compression_method(CompressionMethod::Stored);
+
+    // Create plugin.yml content
+    let mut plugin_yml = format!("name: {}\n", plugin_name);
+    if let Some(version) = plugin_version {
+        plugin_yml.push_str(&format!("version: {}\n", version));
+    }
+    plugin_yml.push_str("main: com.example.TestPlugin\n");
+
+    zip.start_file("plugin.yml", options)?;
+    zip.write_all(plugin_yml.as_bytes())?;
+    zip.finish()?;
+
+    Ok(())
+}
+
+// Helper function to create a test JAR file without plugin.yml
+fn create_empty_jar(jar_path: &Path) -> std::io::Result<()> {
+    let file = fs::File::create(jar_path)?;
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::<()>::default().compression_method(CompressionMethod::Stored);
+
+    // Just add a dummy file
+    zip.start_file("META-INF/MANIFEST.MF", options)?;
+    zip.write_all(b"Manifest-Version: 1.0\n")?;
+    zip.finish()?;
+
+    Ok(())
+}
+
+#[test]
+fn test_import_creates_manifest_and_lockfile() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create plugins directory
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Create a test JAR file
+    let jar_path = format!("{}/test-plugin.jar", plugins_dir);
+    create_test_jar(Path::new(&jar_path), "TestPlugin", Some("1.0.0")).unwrap();
+
+    // Run import
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(success, "Import command should succeed. output: {}", output);
+    assert!(
+        output.contains("Imported 1 plugin"),
+        "Expected 'Imported 1 plugin' in output: {}",
+        output
+    );
+    assert!(
+        output.contains("TestPlugin"),
+        "Expected plugin name in output: {}",
+        output
+    );
+
+    // Verify manifest was created
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    assert!(
+        Path::new(&manifest_path).exists(),
+        "Manifest file should be created"
+    );
+
+    let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest_content.contains("TestPlugin"));
+    assert!(manifest_content.contains("source = \"unknown\""));
+    assert!(manifest_content.contains("id = \"TestPlugin\""));
+
+    // Verify lockfile was created
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        Path::new(&lockfile_path).exists(),
+        "Lockfile should be created"
+    );
+
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(lockfile_content.contains("TestPlugin"));
+    assert!(lockfile_content.contains("test-plugin.jar"));
+    assert!(lockfile_content.contains("sha256:"));
+    assert!(lockfile_content.contains("unknown://"));
+}
+
+#[test]
+fn test_import_multiple_plugins() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create plugins directory
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Create multiple test JAR files
+    create_test_jar(
+        Path::new(&format!("{}/plugin1.jar", plugins_dir)),
+        "PluginOne",
+        Some("1.0.0"),
+    )
+    .unwrap();
+    create_test_jar(
+        Path::new(&format!("{}/plugin2.jar", plugins_dir)),
+        "PluginTwo",
+        Some("2.0.0"),
+    )
+    .unwrap();
+
+    // Run import
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(success, "Import command should succeed. output: {}", output);
+    assert!(
+        output.contains("Imported 2 plugin"),
+        "Expected 'Imported 2 plugin' in output: {}",
+        output
+    );
+
+    // Verify both plugins are in manifest
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest_content.contains("PluginOne"));
+    assert!(manifest_content.contains("PluginTwo"));
+
+    // Verify both plugins are in lockfile
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(lockfile_content.contains("PluginOne"));
+    assert!(lockfile_content.contains("PluginTwo"));
+    assert!(lockfile_content.contains("plugin1.jar"));
+    assert!(lockfile_content.contains("plugin2.jar"));
+}
+
+#[test]
+fn test_import_without_plugin_yml() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create plugins directory
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Create a JAR file without plugin.yml
+    let jar_path = format!("{}/no-plugin-yml.jar", plugins_dir);
+    create_empty_jar(Path::new(&jar_path)).unwrap();
+
+    // Run import
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(success, "Import command should succeed. output: {}", output);
+    assert!(
+        output.contains("Imported 1 plugin"),
+        "Expected 'Imported 1 plugin' in output: {}",
+        output
+    );
+
+    // Verify manifest uses filename as plugin name
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest_content.contains("no-plugin-yml"));
+}
+
+#[test]
+fn test_import_without_version() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create plugins directory
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Create a JAR file with plugin.yml but no version
+    let jar_path = format!("{}/no-version.jar", plugins_dir);
+    create_test_jar(Path::new(&jar_path), "NoVersionPlugin", None).unwrap();
+
+    // Run import
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(success, "Import command should succeed. output: {}", output);
+
+    // Verify manifest doesn't have version
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest_content.contains("NoVersionPlugin"));
+
+    // Verify lockfile uses filename as version fallback
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(lockfile_content.contains("no-version.jar"));
+}
+
+#[test]
+fn test_import_fails_when_manifest_exists() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create manifest first
+    run_command(&["init"], test_dir);
+
+    // Create plugins directory with a JAR
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+    create_test_jar(
+        Path::new(&format!("{}/test.jar", plugins_dir)),
+        "TestPlugin",
+        Some("1.0.0"),
+    )
+    .unwrap();
+
+    // Run import - should fail
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(
+        !success,
+        "Import should fail when manifest exists. output: {}",
+        output
+    );
+    assert!(
+        output.contains("plugins.toml already exists") || output.contains("Remove it first"),
+        "Expected error message in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_import_fails_when_plugins_dir_missing() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Don't create plugins directory
+
+    // Run import - should fail
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(
+        !success,
+        "Import should fail when plugins directory doesn't exist. output: {}",
+        output
+    );
+    assert!(
+        output.contains("does not exist") || output.contains("Plugins directory"),
+        "Expected error message in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_import_empty_plugins_directory() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create empty plugins directory
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Run import
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(success, "Import command should succeed. output: {}", output);
+    assert!(
+        output.contains("No JAR files found") || output.contains("Created empty"),
+        "Expected empty directory message in output: {}",
+        output
+    );
+
+    // Verify empty manifest and lockfile were created
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        Path::new(&manifest_path).exists(),
+        "Manifest file should be created"
+    );
+    assert!(
+        Path::new(&lockfile_path).exists(),
+        "Lockfile should be created"
+    );
+}
+
+#[test]
+fn test_import_ignores_non_jar_files() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Create plugins directory
+    let plugins_dir = format!("{}/plugins", test_dir);
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Create a JAR file
+    create_test_jar(
+        Path::new(&format!("{}/plugin.jar", plugins_dir)),
+        "TestPlugin",
+        Some("1.0.0"),
+    )
+    .unwrap();
+
+    // Create a non-JAR file
+    fs::write(format!("{}/not-a-plugin.txt", plugins_dir), b"content").unwrap();
+
+    // Run import
+    let (success, output, _) = run_command(&["import"], test_dir);
+
+    assert!(success, "Import command should succeed. output: {}", output);
+    assert!(
+        output.contains("Imported 1 plugin"),
+        "Expected only 1 plugin (JAR file) in output: {}",
+        output
+    );
+
+    // Verify only the JAR is in manifest
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest_content.contains("TestPlugin"));
+    assert!(!manifest_content.contains("not-a-plugin"));
 }
