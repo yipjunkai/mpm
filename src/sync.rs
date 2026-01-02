@@ -2,7 +2,7 @@
 
 use crate::config;
 use crate::lockfile::{LockedPlugin, Lockfile};
-use sha2::{Digest, Sha512};
+use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::path::Path;
 
@@ -31,11 +31,8 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
         needs_restore = true;
 
         // Get list of managed plugin filenames
-        let managed_files: std::collections::HashSet<String> = lockfile
-            .plugin
-            .iter()
-            .map(|p| p.file.clone())
-            .collect();
+        let managed_files: std::collections::HashSet<String> =
+            lockfile.plugin.iter().map(|p| p.file.clone()).collect();
 
         // Track which files need to be downloaded
         let mut files_to_download = Vec::new();
@@ -45,8 +42,10 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
 
             // Check if file already exists with correct hash and filename
             if target_path.exists() {
-                if let Ok(existing_hash) = verify_plugin_hash(&target_path) {
-                    if existing_hash == plugin.sha256 {
+                // Parse hash to get algorithm
+                let (algorithm, _) = plugin.parse_hash()?;
+                if let Ok(existing_hash) = verify_plugin_hash(&target_path, algorithm) {
+                    if existing_hash == plugin.hash {
                         println!("  ✓ {} (already synced)", plugin.name);
                         continue;
                     }
@@ -89,13 +88,22 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn verify_plugin_hash(file_path: &Path) -> anyhow::Result<String> {
+fn verify_plugin_hash(file_path: &Path, algorithm: &str) -> anyhow::Result<String> {
     let data = fs::read(file_path)?;
-    // Use SHA-512 since lockfile stores SHA-512 hashes (128 hex chars)
-    let mut hasher = Sha512::new();
-    hasher.update(&data);
-    let hash = hasher.finalize();
-    Ok(hex::encode(hash))
+    let hash_hex = match algorithm {
+        "sha256" => {
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            hex::encode(hasher.finalize())
+        }
+        "sha512" => {
+            let mut hasher = Sha512::new();
+            hasher.update(&data);
+            hex::encode(hasher.finalize())
+        }
+        _ => anyhow::bail!("Unsupported hash algorithm: {}", algorithm),
+    };
+    Ok(format!("{}:{}", algorithm, hash_hex))
 }
 
 async fn download_and_verify(plugin: &LockedPlugin, target_path: &Path) -> anyhow::Result<()> {
@@ -103,16 +111,32 @@ async fn download_and_verify(plugin: &LockedPlugin, target_path: &Path) -> anyho
     let response = reqwest::get(&plugin.url).await?;
     let data = response.bytes().await?;
 
-    // Verify hash (using SHA-512 since lockfile stores SHA-512 hashes)
-    let mut hasher = Sha512::new();
-    hasher.update(&data);
-    let computed_hash = hex::encode(hasher.finalize());
+    // Parse hash to get algorithm and expected hash
+    let (algorithm, expected_hash) = plugin.parse_hash()?;
 
-    if computed_hash != plugin.sha256 {
+    // Compute hash using the correct algorithm
+    let computed_hash = match algorithm {
+        "sha256" => {
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            hex::encode(hasher.finalize())
+        }
+        "sha512" => {
+            let mut hasher = Sha512::new();
+            hasher.update(&data);
+            hex::encode(hasher.finalize())
+        }
+        _ => anyhow::bail!("Unsupported hash algorithm: {}", algorithm),
+    };
+
+    // Compare computed hash with expected hash
+    if computed_hash != expected_hash {
         anyhow::bail!(
-            "Hash mismatch for {}: expected {}, got {}",
+            "Hash mismatch for {}: expected {}:{}, got {}:{}",
             plugin.name,
-            plugin.sha256,
+            algorithm,
+            expected_hash,
+            algorithm,
             computed_hash
         );
     }
@@ -217,9 +241,7 @@ fn atomic_replace(plugins_dir: &str, staging_dir: &str, _backup_dir: &str) -> an
                 let entry = entry?;
                 let path = entry.path();
                 // Only remove .jar files that are being replaced, preserve plugins.toml and plugins.lock
-                if path.is_file()
-                    && path.extension().and_then(|s| s.to_str()) == Some("jar")
-                {
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar") {
                     if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                         if staged_files.contains(filename) {
                             fs::remove_file(&path)?;
@@ -290,4 +312,3 @@ fn cleanup_temp_dirs(plugins_dir: &str) -> anyhow::Result<()> {
 
     Ok(())
 }
-

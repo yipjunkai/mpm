@@ -81,17 +81,13 @@ pub async fn resolve_version(
         anyhow::anyhow!("No files found for version '{}'", version.version_number)
     })?;
 
-    // Use sha512 as sha256 (Modrinth provides sha512, we'll use it for sha256 field)
-    // In a real implementation, you might want to compute sha256 from the file
-    let sha256 = file.hashes.sha256.clone().unwrap_or_else(|| {
-        // Use first 64 chars of sha512 as a placeholder, or use sha512 directly
-        file.hashes.sha512.clone()
-    });
+    // Use sha512 from Modrinth API and format as UV-style hash (algorithm:hash)
+    let hash = format!("sha512:{}", file.hashes.sha512);
 
     Ok((
         version.version_number.clone(),
         file.filename.clone(),
         file.url.clone(),
-        sha256,
+        hash,
     ))
 }

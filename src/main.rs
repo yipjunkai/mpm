@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
             for (name, plugin_spec) in manifest.plugins.iter() {
                 println!("Resolving {}...", name);
 
-                let (version, filename, url, sha256) = match plugin_spec.source.as_str() {
+                let (version, filename, url, hash) = match plugin_spec.source.as_str() {
                     "modrinth" => {
                         modrinth::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref())
                             .await?
@@ -115,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
                     version: version.clone(),
                     file: filename.clone(),
                     url: url.clone(),
-                    sha256: sha256.clone(),
+                    hash: hash.clone(),
                 });
 
                 println!("  → {} {}", name, version);

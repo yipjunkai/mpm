@@ -15,7 +15,7 @@ pub struct LockedPlugin {
     pub version: String,
     pub file: String,
     pub url: String,
-    pub sha256: String,
+    pub hash: String,
 }
 
 impl Lockfile {
@@ -44,5 +44,21 @@ impl Lockfile {
 
     pub fn sort_by_name(&mut self) {
         self.plugin.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+}
+
+impl LockedPlugin {
+    /// Parse the hash string into (algorithm, hash) tuple.
+    /// Format: "sha512:abc123..." -> ("sha512", "abc123...")
+    pub fn parse_hash(&self) -> anyhow::Result<(&str, &str)> {
+        let parts: Vec<&str> = self.hash.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            anyhow::bail!(
+                "Invalid hash format for {}: expected 'algorithm:hash', got '{}'",
+                self.name,
+                self.hash
+            );
+        }
+        Ok((parts[0], parts[1]))
     }
 }

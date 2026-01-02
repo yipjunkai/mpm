@@ -324,7 +324,7 @@ fn test_lock_creates_lockfile() {
     assert!(content.contains("modrinth"));
     assert!(content.contains("version"));
     assert!(content.contains("url"));
-    assert!(content.contains("sha256"));
+    assert!(content.contains("hash"));
 }
 
 #[test]
@@ -438,7 +438,11 @@ fn test_sync_fails_without_lockfile() {
 
     let (success, output, _) = run_command(&["sync"], test_dir);
 
-    assert!(!success, "Sync should fail without lockfile. output: {}", output);
+    assert!(
+        !success,
+        "Sync should fail without lockfile. output: {}",
+        output
+    );
     assert!(
         output.contains("Lockfile not found") || output.contains("Run 'pm lock' first"),
         "Expected error message in output: {}",
@@ -473,10 +477,7 @@ fn test_sync_downloads_plugins() {
         .lines()
         .find(|l| l.contains("file ="))
         .unwrap();
-    let filename = filename_line
-        .split('"')
-        .nth(1)
-        .unwrap();
+    let filename = filename_line.split('"').nth(1).unwrap();
 
     let plugin_path = format!("{}/{}", test_dir, filename);
     assert!(
@@ -506,10 +507,7 @@ fn test_sync_is_idempotent() {
         .lines()
         .find(|l| l.contains("file ="))
         .unwrap();
-    let filename = filename_line
-        .split('"')
-        .nth(1)
-        .unwrap();
+    let filename = filename_line.split('"').nth(1).unwrap();
     let plugin_path = format!("{}/{}", test_dir, filename);
     let metadata1 = fs::metadata(&plugin_path).unwrap();
 
