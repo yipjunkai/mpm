@@ -27,8 +27,6 @@ pub struct VersionFile {
 #[derive(Debug, Deserialize)]
 pub struct FileHashes {
     pub sha512: String,
-    #[serde(default)]
-    pub sha256: Option<String>,
 }
 
 pub async fn get_project(slug: &str) -> anyhow::Result<Project> {
