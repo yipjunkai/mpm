@@ -443,7 +443,11 @@ fn test_lock_dry_run_previews_changes() {
 
     let (success, output, _) = run_command(&["lock", "--dry-run"], test_dir);
 
-    assert!(success, "Lock --dry-run command should succeed. output: {}", output);
+    assert!(
+        success,
+        "Lock --dry-run command should succeed. output: {}",
+        output
+    );
     assert!(
         output.contains("[DRY RUN]") || output.contains("Would lock"),
         "Expected dry-run message in output: {}",
@@ -473,7 +477,11 @@ fn test_lock_dry_run_vs_normal_lock() {
 
     // Run lock --dry-run first
     let (success1, output1, _) = run_command(&["lock", "--dry-run"], test_dir);
-    assert!(success1, "Lock --dry-run should succeed. output: {}", output1);
+    assert!(
+        success1,
+        "Lock --dry-run should succeed. output: {}",
+        output1
+    );
 
     let lockfile_path = format!("{}/plugins.lock", test_dir);
     assert!(
@@ -1004,7 +1012,11 @@ fn test_sync_dry_run_previews_changes() {
 
     let (success, output, _) = run_command(&["sync", "--dry-run"], test_dir);
 
-    assert!(success, "Sync --dry-run command should succeed. output: {}", output);
+    assert!(
+        success,
+        "Sync --dry-run command should succeed. output: {}",
+        output
+    );
     assert!(
         output.contains("[DRY RUN]") || output.contains("Would"),
         "Expected dry-run message in output: {}",
@@ -1017,12 +1029,7 @@ fn test_sync_dry_run_previews_changes() {
         let entries: Vec<_> = fs::read_dir(&plugins_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    == Some("jar")
-            })
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("jar"))
             .collect();
         assert!(
             entries.is_empty(),
@@ -1075,7 +1082,11 @@ fn test_sync_dry_run_vs_normal_sync() {
 
     // Run sync --dry-run first
     let (success1, output1, _) = run_command(&["sync", "--dry-run"], test_dir);
-    assert!(success1, "Sync --dry-run should succeed. output: {}", output1);
+    assert!(
+        success1,
+        "Sync --dry-run should succeed. output: {}",
+        output1
+    );
     assert!(
         output1.contains("[DRY RUN]") || output1.contains("Would"),
         "Expected dry-run message in output: {}",

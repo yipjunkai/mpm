@@ -19,7 +19,10 @@ struct PluginYml {
 pub fn import_plugins() -> anyhow::Result<()> {
     // Check if plugins.toml already exists
     if Manifest::load().is_ok() {
-        anyhow::bail!("{} already exists. Remove it first before importing.", constants::MANIFEST_FILE);
+        anyhow::bail!(
+            "{} already exists. Remove it first before importing.",
+            constants::MANIFEST_FILE
+        );
     }
 
     let plugins_dir = config::plugins_dir();
@@ -47,7 +50,11 @@ pub fn import_plugins() -> anyhow::Result<()> {
         let lockfile = Lockfile::new();
         lockfile.save()?;
 
-        println!("Created empty {} and {}", constants::MANIFEST_FILE, constants::LOCKFILE_FILE);
+        println!(
+            "Created empty {} and {}",
+            constants::MANIFEST_FILE,
+            constants::LOCKFILE_FILE
+        );
         return Ok(());
     }
 
@@ -77,9 +84,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
         lockfile.add_plugin(LockedPlugin {
             name: name.clone(),
             source: "unknown".to_string(),
-            version: version_option
-                .clone()
-                .unwrap_or_else(|| filename.clone()),
+            version: version_option.clone().unwrap_or_else(|| filename.clone()),
             file: filename.clone(),
             url: "unknown://".to_string(),
             hash: hash.clone(),
@@ -101,7 +106,9 @@ pub fn import_plugins() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<(String, String, Option<String>, String)>> {
+fn scan_plugins_dir(
+    plugins_dir: &str,
+) -> anyhow::Result<Vec<(String, String, Option<String>, String)>> {
     let plugins_path = Path::new(plugins_dir);
     let mut plugins = Vec::new();
 
@@ -124,7 +131,10 @@ fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<(String, String, Op
                     let (name, version) = match read_plugin_yml_from_jar(&path) {
                         Ok((n, v)) => (n, v),
                         Err(e) => {
-                            eprintln!("Warning: Could not read plugin.yml from {}: {}", filename, e);
+                            eprintln!(
+                                "Warning: Could not read plugin.yml from {}: {}",
+                                filename, e
+                            );
                             // Fallback to filename without .jar extension
                             let fallback_name = filename
                                 .strip_suffix(".jar")
@@ -195,4 +205,3 @@ fn compute_sha256(file_path: &Path) -> anyhow::Result<String> {
     let hash_hex = hex::encode(hasher.finalize());
     Ok(format!("sha256:{}", hash_hex))
 }
-

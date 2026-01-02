@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::path::Path;
 
-pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
+pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     // Load lockfile
     let lockfile = Lockfile::load()
         .map_err(|_| anyhow::anyhow!("Lockfile not found. Run 'pm lock' first."))?;
@@ -68,6 +68,9 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
             files_to_download.push(plugin);
         }
 
+        // Track if there are changes (for exit code)
+        let mut has_changes = !files_to_download.is_empty();
+
         // Download files that need updating
         for plugin in files_to_download {
             if dry_run {
@@ -93,6 +96,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
                             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                                 if filename.ends_with(".jar") && !managed_files.contains(filename) {
                                     println!("  → Would remove unmanaged file: {}", filename);
+                                    has_changes = true;
                                 }
                             }
                         }
@@ -100,7 +104,8 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
                 }
             }
         } else {
-            remove_unmanaged_files(&plugins_dir, &managed_files)?;
+            let unmanaged_removed = remove_unmanaged_files(&plugins_dir, &managed_files)?;
+            has_changes = has_changes || unmanaged_removed;
         }
 
         // Atomically replace plugins
@@ -109,7 +114,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
         }
 
         needs_restore = false;
-        Ok::<(), anyhow::Error>(())
+        Ok::<bool, anyhow::Error>(has_changes)
     }
     .await;
 
@@ -123,14 +128,18 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
         cleanup_temp_dirs(&plugins_dir)?;
     }
 
-    result?;
+    // If there was an error, return error exit code
+    let has_changes = result?;
 
     if dry_run {
         println!("[DRY RUN] Would sync {} plugin(s)", lockfile.plugin.len());
+        // Return exit code: 0 = no changes, 1 = changes would be applied
+        Ok(if has_changes { 1 } else { 0 })
     } else {
         println!("Synced {} plugin(s)", lockfile.plugin.len());
+        // For non-dry-run, always return 0 on success
+        Ok(0)
     }
-    Ok(())
 }
 
 pub fn verify_plugin_hash(file_path: &Path, algorithm: &str) -> anyhow::Result<String> {
@@ -318,12 +327,13 @@ fn atomic_replace(plugins_dir: &str, staging_dir: &str, _backup_dir: &str) -> an
 fn remove_unmanaged_files(
     plugins_dir: &str,
     managed_files: &std::collections::HashSet<String>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let plugins_path = Path::new(plugins_dir);
     if !plugins_path.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
+    let mut removed_any = false;
     if let Ok(entries) = fs::read_dir(plugins_path) {
         for entry in entries {
             let entry = entry?;
@@ -334,13 +344,14 @@ fn remove_unmanaged_files(
                     if filename.ends_with(".jar") && !managed_files.contains(filename) {
                         println!("  → Removing unmanaged file: {}", filename);
                         fs::remove_file(&path)?;
+                        removed_any = true;
                     }
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(removed_any)
 }
 
 fn cleanup_temp_dirs(plugins_dir: &str) -> anyhow::Result<()> {

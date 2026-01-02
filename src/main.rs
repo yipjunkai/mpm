@@ -15,6 +15,7 @@ use cli::Cli;
 use lockfile::{LockedPlugin, Lockfile};
 use manifest::{Manifest, Minecraft, PluginSpec};
 use sources::modrinth;
+use toml;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -135,13 +136,35 @@ async fn main() -> anyhow::Result<()> {
             // Save lockfile
             if dry_run {
                 println!("[DRY RUN] Would lock {} plugin(s)", lockfile.plugin.len());
+
+                // Check if lockfile would change by comparing with existing lockfile
+                let exit_code = match Lockfile::load() {
+                    Ok(existing_lockfile) => {
+                        // Compare lockfiles by serializing them
+                        let new_content = toml::to_string_pretty(&lockfile)?;
+                        let existing_content = toml::to_string_pretty(&existing_lockfile)?;
+                        if new_content == existing_content {
+                            0 // Lockfile already matches
+                        } else {
+                            1 // Lockfile would change
+                        }
+                    }
+                    Err(_) => {
+                        // No existing lockfile, so it would be created (change)
+                        1
+                    }
+                };
+                std::process::exit(exit_code);
             } else {
                 lockfile.save()?;
                 println!("Locked {} plugin(s)", lockfile.plugin.len());
             }
         }
         cli::Commands::Sync { dry_run } => {
-            sync::sync_plugins(dry_run).await?;
+            let exit_code = sync::sync_plugins(dry_run).await?;
+            if dry_run {
+                std::process::exit(exit_code);
+            }
         }
         cli::Commands::Doctor { json } => {
             let exit_code = doctor::check_health(json)?;
