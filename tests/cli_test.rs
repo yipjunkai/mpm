@@ -195,24 +195,51 @@ fn test_add_fails_without_init() {
 }
 
 #[test]
-fn test_add_fails_with_invalid_spec() {
+fn test_add_plugin_without_source() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
     run_command(&["init"], test_dir);
 
-    let (success, output, _) = run_command(&["add", "invalid-spec"], test_dir);
+    // Add plugin without source (should default to modrinth)
+    let (success, output, _) = run_command(&["add", "fabric-api"], test_dir);
 
+    assert!(success, "Add command should succeed. output: {}", output);
     assert!(
-        !success,
-        "Add should fail with invalid spec. output: {}",
+        output.contains("Added plugin 'fabric-api'"),
+        "Expected 'Added plugin' in output: {}",
         output
     );
+
+    // Verify manifest contains the plugin with modrinth source
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(content.contains("fabric-api"));
+    assert!(content.contains("modrinth"));
+}
+
+#[test]
+fn test_add_plugin_with_version_without_source() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Add plugin with version but without source (should default to modrinth)
+    let (success, output, _) = run_command(&["add", "worldedit@7.3.0"], test_dir);
+
+    assert!(success, "Add command should succeed. output: {}", output);
     assert!(
-        output.contains("Invalid spec format"),
-        "Expected 'Invalid spec format' in output: {}",
+        output.contains("Added plugin 'worldedit'"),
+        "Expected 'Added plugin' in output: {}",
         output
     );
+
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(content.contains("worldedit"));
+    assert!(content.contains("7.3.0"));
+    assert!(content.contains("modrinth"));
 }
 
 #[test]

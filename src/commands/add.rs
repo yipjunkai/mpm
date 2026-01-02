@@ -1,17 +1,20 @@
 // Add command for adding a plugin to the manifest
 
+use crate::constants;
 use crate::manifest::{Manifest, PluginSpec};
 
 pub fn add(spec: String) -> anyhow::Result<()> {
-    // Parse spec format: source:id or source:id@version
-    // Example: modrinth:fabric-api or modrinth:worldedit@7.3.0
-    let parts: Vec<&str> = spec.split(':').collect();
-    if parts.len() != 2 {
-        anyhow::bail!("Invalid spec format. Expected: source:id or source:id@version");
-    }
-
-    let source = parts[0];
-    let id_version = parts[1];
+    // Parse spec format:
+    // - source:id or source:id@version (e.g., modrinth:fabric-api)
+    // - id or id@version (defaults to modrinth source)
+    let (source, id_version) = if let Some(colon_pos) = spec.find(':') {
+        let source = &spec[..colon_pos];
+        let id_version = &spec[colon_pos + 1..];
+        (source, id_version)
+    } else {
+        // No colon found, default to modrinth
+        (constants::DEFAULT_PLUGIN_SOURCE, spec.as_str())
+    };
 
     let (id, version) = if let Some(at_pos) = id_version.find('@') {
         let id = &id_version[..at_pos];

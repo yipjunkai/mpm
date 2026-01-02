@@ -29,13 +29,17 @@ pub enum Commands {
     /// Add a plugin to the manifest
     ///
     /// Adds a plugin specification to plugins.toml. The spec format is:
-    /// source:id or source:id@version
+    /// source:id, source:id@version, id, or id@version
+    ///
+    /// If no source is specified, defaults to DEFAULT_PLUGIN_SOURCE.
     ///
     /// Examples:
+    ///   mpm add fabric-api
+    ///   mpm add worldedit@7.3.0
     ///   mpm add modrinth:fabric-api
     ///   mpm add modrinth:worldedit@7.3.0
     Add {
-        /// Plugin specification in format: source:id[@version]
+        /// Plugin specification (id[@version] or source:id[@version])
         spec: String,
     },
     /// Remove a plugin from the manifest
