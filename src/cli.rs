@@ -48,12 +48,20 @@ pub enum Commands {
     ///
     /// Resolves plugin versions and generates plugins.lock with exact versions,
     /// filenames, URLs, and hashes. This ensures reproducible installations.
-    Lock,
+    Lock {
+        /// Preview changes without writing the lockfile
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Synchronize plugins directory with lockfile
     ///
     /// Downloads missing plugins, verifies hashes, and removes unmanaged files.
     /// Ensures the plugins directory matches the lockfile exactly.
-    Sync,
+    Sync {
+        /// Preview changes without modifying the plugins directory
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Check plugin manager health
     ///
     /// Verifies that configuration files exist, plugin files are present,

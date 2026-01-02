@@ -90,10 +90,14 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Plugin '{}' not found in manifest", spec);
             }
         }
-        cli::Commands::Lock => {
+        cli::Commands::Lock { dry_run } => {
             // Load manifest
             let manifest = Manifest::load()
                 .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
+
+            if dry_run {
+                println!("[DRY RUN] Previewing lock changes...");
+            }
 
             let mut lockfile = Lockfile::new();
 
@@ -127,11 +131,15 @@ async fn main() -> anyhow::Result<()> {
             lockfile.sort_by_name();
 
             // Save lockfile
-            lockfile.save()?;
-            println!("Locked {} plugin(s)", lockfile.plugin.len());
+            if dry_run {
+                println!("[DRY RUN] Would lock {} plugin(s)", lockfile.plugin.len());
+            } else {
+                lockfile.save()?;
+                println!("Locked {} plugin(s)", lockfile.plugin.len());
+            }
         }
-        cli::Commands::Sync => {
-            sync::sync_plugins().await?;
+        cli::Commands::Sync { dry_run } => {
+            sync::sync_plugins(dry_run).await?;
         }
         cli::Commands::Doctor { json } => {
             let exit_code = doctor::check_health(json)?;

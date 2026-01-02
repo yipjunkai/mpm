@@ -433,6 +433,71 @@ fn test_lock_deterministic_multiple_runs() {
 }
 
 #[test]
+fn test_lock_dry_run_previews_changes() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Init and add plugins
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    let (success, output, _) = run_command(&["lock", "--dry-run"], test_dir);
+
+    assert!(success, "Lock --dry-run command should succeed. output: {}", output);
+    assert!(
+        output.contains("[DRY RUN]") || output.contains("Would lock"),
+        "Expected dry-run message in output: {}",
+        output
+    );
+    assert!(
+        output.contains("Resolving") || output.contains("fabric-api"),
+        "Expected plugin resolution in output: {}",
+        output
+    );
+
+    // Verify lockfile was NOT created
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        !Path::new(&lockfile_path).exists(),
+        "Lockfile should NOT be created in dry-run mode"
+    );
+}
+
+#[test]
+fn test_lock_dry_run_vs_normal_lock() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    // Run lock --dry-run first
+    let (success1, output1, _) = run_command(&["lock", "--dry-run"], test_dir);
+    assert!(success1, "Lock --dry-run should succeed. output: {}", output1);
+
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        !Path::new(&lockfile_path).exists(),
+        "Lockfile should not exist after dry-run"
+    );
+
+    // Now run normal lock
+    let (success2, output2, _) = run_command(&["lock"], test_dir);
+    assert!(success2, "Lock should succeed. output: {}", output2);
+    assert!(
+        output2.contains("Locked"),
+        "Expected 'Locked' message in output: {}",
+        output2
+    );
+
+    // Verify lockfile was created
+    assert!(
+        Path::new(&lockfile_path).exists(),
+        "Lockfile should be created after normal lock"
+    );
+}
+
+#[test]
 fn test_doctor_fails_without_lockfile() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
@@ -922,6 +987,126 @@ fn test_sync_full_workflow() {
             plugin_path
         );
     }
+}
+
+#[test]
+fn test_sync_dry_run_previews_changes() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Setup
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+
+    let (success, output, _) = run_command(&["sync", "--dry-run"], test_dir);
+
+    assert!(success, "Sync --dry-run command should succeed. output: {}", output);
+    assert!(
+        output.contains("[DRY RUN]") || output.contains("Would"),
+        "Expected dry-run message in output: {}",
+        output
+    );
+
+    // Verify plugins directory was NOT modified
+    let plugins_dir = format!("{}/plugins", test_dir);
+    if Path::new(&plugins_dir).exists() {
+        let entries: Vec<_> = fs::read_dir(&plugins_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    == Some("jar")
+            })
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "No plugin files should be downloaded in dry-run mode"
+        );
+    }
+}
+
+#[test]
+fn test_sync_dry_run_shows_unmanaged_files() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Setup
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    // Add an unmanaged file
+    let plugins_dir = format!("{}/plugins", test_dir);
+    let unmanaged_file = format!("{}/unmanaged-plugin.jar", plugins_dir);
+    fs::write(&unmanaged_file, b"fake plugin content").unwrap();
+
+    let (success, output, _) = run_command(&["sync", "--dry-run"], test_dir);
+
+    assert!(success, "Sync --dry-run should succeed. output: {}", output);
+    assert!(
+        output.contains("Would remove unmanaged file") || output.contains("unmanaged-plugin"),
+        "Expected unmanaged file warning in output: {}",
+        output
+    );
+
+    // Verify unmanaged file still exists (not actually removed)
+    assert!(
+        Path::new(&unmanaged_file).exists(),
+        "Unmanaged file should still exist after dry-run"
+    );
+}
+
+#[test]
+fn test_sync_dry_run_vs_normal_sync() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Setup
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+
+    // Run sync --dry-run first
+    let (success1, output1, _) = run_command(&["sync", "--dry-run"], test_dir);
+    assert!(success1, "Sync --dry-run should succeed. output: {}", output1);
+    assert!(
+        output1.contains("[DRY RUN]") || output1.contains("Would"),
+        "Expected dry-run message in output: {}",
+        output1
+    );
+
+    // Verify no files were downloaded
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    let filename_line = lockfile_content
+        .lines()
+        .find(|l| l.contains("file ="))
+        .unwrap();
+    let filename = filename_line.split('"').nth(1).unwrap();
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
+    assert!(
+        !Path::new(&plugin_path).exists(),
+        "Plugin file should not exist after dry-run"
+    );
+
+    // Now run normal sync
+    let (success2, output2, _) = run_command(&["sync"], test_dir);
+    assert!(success2, "Sync should succeed. output: {}", output2);
+    assert!(
+        output2.contains("Synced"),
+        "Expected 'Synced' message in output: {}",
+        output2
+    );
+
+    // Verify plugin file was created
+    assert!(
+        Path::new(&plugin_path).exists(),
+        "Plugin file should be created after normal sync"
+    );
 }
 
 // Helper function to create a test JAR file with plugin.yml

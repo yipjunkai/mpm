@@ -6,23 +6,36 @@ use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::path::Path;
 
-pub async fn sync_plugins() -> anyhow::Result<()> {
+pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<()> {
     // Load lockfile
     let lockfile = Lockfile::load()
         .map_err(|_| anyhow::anyhow!("Lockfile not found. Run 'pm lock' first."))?;
 
     let plugins_dir = config::plugins_dir();
+
+    if dry_run {
+        println!("[DRY RUN] Previewing sync changes...");
+    }
+
     let staging_dir = format!("{}/.plugins.staging", plugins_dir);
     let backup_dir = format!("{}/.plugins.backup", plugins_dir);
 
     // Clean up any leftover staging/backup directories
-    cleanup_temp_dirs(&plugins_dir)?;
+    if !dry_run {
+        cleanup_temp_dirs(&plugins_dir)?;
+    }
 
     // Create staging directory
-    fs::create_dir_all(&staging_dir)?;
+    if !dry_run {
+        fs::create_dir_all(&staging_dir)?;
+    }
 
     // Create backup of current plugins directory
-    let _backup_created = create_backup(&plugins_dir, &backup_dir)?;
+    let _backup_created = if !dry_run {
+        create_backup(&plugins_dir, &backup_dir)?
+    } else {
+        false
+    };
 
     // Track if we need to restore on error
     let mut needs_restore = false;
@@ -57,17 +70,43 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
 
         // Download files that need updating
         for plugin in files_to_download {
-            let staging_path = Path::new(&staging_dir).join(&plugin.file);
-            println!("  → Downloading {}...", plugin.name);
-            download_and_verify(plugin, &staging_path).await?;
-            println!("  ✓ {} verified", plugin.name);
+            if dry_run {
+                println!("  → Would download and verify {}", plugin.name);
+            } else {
+                let staging_path = Path::new(&staging_dir).join(&plugin.file);
+                println!("  → Downloading {}...", plugin.name);
+                download_and_verify(plugin, &staging_path).await?;
+                println!("  ✓ {} verified", plugin.name);
+            }
         }
 
         // Remove unmanaged .jar files
-        remove_unmanaged_files(&plugins_dir, &managed_files)?;
+        if dry_run {
+            // Just preview what would be removed
+            let plugins_path = Path::new(&plugins_dir);
+            if plugins_path.exists() {
+                if let Ok(entries) = fs::read_dir(plugins_path) {
+                    for entry in entries {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_file() {
+                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                if filename.ends_with(".jar") && !managed_files.contains(filename) {
+                                    println!("  → Would remove unmanaged file: {}", filename);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            remove_unmanaged_files(&plugins_dir, &managed_files)?;
+        }
 
         // Atomically replace plugins
-        atomic_replace(&plugins_dir, &staging_dir, &backup_dir)?;
+        if !dry_run {
+            atomic_replace(&plugins_dir, &staging_dir, &backup_dir)?;
+        }
 
         needs_restore = false;
         Ok::<(), anyhow::Error>(())
@@ -75,16 +114,22 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
     .await;
 
     // Cleanup and restore on error
-    if result.is_err() && needs_restore {
+    if !dry_run && result.is_err() && needs_restore {
         restore_backup(&plugins_dir, &backup_dir)?;
     }
 
     // Clean up staging and backup directories
-    cleanup_temp_dirs(&plugins_dir)?;
+    if !dry_run {
+        cleanup_temp_dirs(&plugins_dir)?;
+    }
 
     result?;
 
-    println!("Synced {} plugin(s)", lockfile.plugin.len());
+    if dry_run {
+        println!("[DRY RUN] Would sync {} plugin(s)", lockfile.plugin.len());
+    } else {
+        println!("Synced {} plugin(s)", lockfile.plugin.len());
+    }
     Ok(())
 }
 
