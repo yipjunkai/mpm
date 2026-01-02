@@ -464,9 +464,13 @@ fn test_lock_dry_run_previews_changes() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
-    // Init and add plugins
+    // Init and add plugins (add now automatically locks, so lockfile exists)
     run_command(&["init"], test_dir);
     run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    // Remove the lockfile to test dry-run with changes
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    fs::remove_file(&lockfile_path).unwrap();
 
     let (success, output, _) = run_command(&["lock", "--dry-run"], test_dir);
 
@@ -487,8 +491,7 @@ fn test_lock_dry_run_previews_changes() {
         output
     );
 
-    // Verify lockfile was NOT created
-    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    // Verify lockfile was NOT created (we removed it before the test)
     assert!(
         !Path::new(&lockfile_path).exists(),
         "Lockfile should NOT be created in dry-run mode"
@@ -503,6 +506,10 @@ fn test_lock_dry_run_vs_normal_lock() {
     run_command(&["init"], test_dir);
     run_command(&["add", "modrinth:fabric-api"], test_dir);
 
+    // Remove the lockfile to test dry-run with changes (add now automatically locks)
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    fs::remove_file(&lockfile_path).unwrap();
+
     // Run lock --dry-run first
     let (success1, output1, _) = run_command(&["lock", "--dry-run"], test_dir);
     // Exit code 1 = changes detected (no lockfile exists, so it would be created)
@@ -512,7 +519,6 @@ fn test_lock_dry_run_vs_normal_lock() {
         output1
     );
 
-    let lockfile_path = format!("{}/plugins.lock", test_dir);
     assert!(
         !Path::new(&lockfile_path).exists(),
         "Lockfile should not exist after dry-run"

@@ -18,10 +18,10 @@ async fn main() -> anyhow::Result<()> {
             commands::init::init(version)?;
         }
         cli::Commands::Add { spec } => {
-            commands::add::add(spec)?;
+            commands::add::add(spec).await?;
         }
         cli::Commands::Remove { spec } => {
-            commands::remove::remove(spec)?;
+            commands::remove::remove(spec).await?;
         }
         cli::Commands::Lock { dry_run } => match commands::lock::lock(dry_run).await {
             Ok(exit_code) => std::process::exit(exit_code),

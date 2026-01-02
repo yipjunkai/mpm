@@ -1,9 +1,10 @@
 // Add command for adding a plugin to the manifest
 
+use crate::commands::lock;
 use crate::constants;
 use crate::manifest::{Manifest, PluginSpec};
 
-pub fn add(spec: String) -> anyhow::Result<()> {
+pub async fn add(spec: String) -> anyhow::Result<()> {
     // Parse spec format:
     // - source:id or source:id@version (e.g., modrinth:fabric-api)
     // - id or id@version (defaults to modrinth source)
@@ -41,5 +42,9 @@ pub fn add(spec: String) -> anyhow::Result<()> {
 
     manifest.save()?;
     println!("Added plugin '{}' from source '{}'", plugin_name, source);
+
+    // Automatically lock after adding
+    lock::lock(false).await?;
+
     Ok(())
 }
