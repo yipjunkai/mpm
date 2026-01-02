@@ -711,6 +711,7 @@ fn test_doctor_json_output_healthy() {
     let json_str = &json_str[..json_end];
 
     let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
+    assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "healthy");
     assert!(json["summary"]["ok"].as_u64().unwrap() > 0);
 }
@@ -744,6 +745,7 @@ fn test_doctor_json_output_drift() {
     let json_str = &json_str[..json_end];
 
     let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
+    assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "drift");
     assert!(json["summary"]["warnings"].as_u64().unwrap() > 0);
 }
@@ -773,6 +775,7 @@ fn test_doctor_json_output_failure() {
     let json_str = &json_str[..json_end];
 
     let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
+    assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "failure");
     assert!(json["summary"]["errors"].as_u64().unwrap() > 0);
 }

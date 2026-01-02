@@ -1,6 +1,7 @@
 // Doctor module for health checking
 
 use crate::config;
+use crate::constants;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
 use crate::sync::verify_plugin_hash;
@@ -25,6 +26,10 @@ struct CheckResult {
 
 #[derive(Debug, Serialize)]
 struct DoctorOutput {
+    /// Schema version for the JSON output format.
+    /// Increment only on breaking changes to ensure future integrations can safely evolve.
+    /// See constants::SCHEMA_VERSION for the current version.
+    schema_version: u32,
     status: String,
     summary: Summary,
     checks: Vec<CheckResult>,
@@ -147,6 +152,7 @@ pub fn check_health(json: bool) -> anyhow::Result<i32> {
         };
 
         let output = DoctorOutput {
+            schema_version: constants::SCHEMA_VERSION,
             status: status.to_string(),
             summary: Summary {
                 ok: ok_count,
