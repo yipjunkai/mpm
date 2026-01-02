@@ -1,7 +1,7 @@
 // Init command for initializing a new plugin manifest
 
 use crate::constants;
-use crate::manifest::{Manifest, Minecraft};
+use crate::manifest::{Manifest, MinecraftSpec};
 
 pub fn init(version: String) -> anyhow::Result<()> {
     // Check if manifest already exists
@@ -11,7 +11,7 @@ pub fn init(version: String) -> anyhow::Result<()> {
     }
 
     let manifest = Manifest {
-        minecraft: Minecraft {
+        minecraft: MinecraftSpec {
             version: version.clone(),
         },
         plugins: Default::default(),

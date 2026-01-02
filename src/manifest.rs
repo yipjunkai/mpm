@@ -6,12 +6,12 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
-    pub minecraft: Minecraft,
+    pub minecraft: MinecraftSpec,
     pub plugins: BTreeMap<String, PluginSpec>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Minecraft {
+pub struct MinecraftSpec {
     pub version: String,
 }
 

@@ -3,7 +3,7 @@
 use crate::config;
 use crate::constants;
 use crate::lockfile::{LockedPlugin, Lockfile};
-use crate::manifest::{Manifest, Minecraft, PluginSpec};
+use crate::manifest::{Manifest, MinecraftSpec, PluginSpec};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -40,7 +40,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
         println!("No JAR files found in plugins directory");
         // Create empty manifest and lockfile
         let manifest = Manifest {
-            minecraft: Minecraft {
+            minecraft: MinecraftSpec {
                 version: constants::DEFAULT_MC_VERSION.to_string(), // Default version
             },
             plugins: BTreeMap::new(),
@@ -72,7 +72,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
     }
 
     let manifest = Manifest {
-        minecraft: Minecraft {
+        minecraft: MinecraftSpec {
             version: constants::DEFAULT_MC_VERSION.to_string(), // Default version, could be detected later
         },
         plugins: manifest_plugins,
