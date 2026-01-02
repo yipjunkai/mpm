@@ -12,9 +12,17 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    Init,
-    Add { spec: String },
-    Remove { spec: String },
+    Init {
+        /// Minecraft version (e.g., 1.20.2)
+        #[arg(default_value = "1.21.11")]
+        version: String,
+    },
+    Add {
+        spec: String,
+    },
+    Remove {
+        spec: String,
+    },
     Lock,
     Sync,
 }
