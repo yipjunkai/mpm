@@ -4,35 +4,57 @@ use crate::config;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
 use crate::sync::verify_plugin_hash;
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
 enum CheckStatus {
     Ok,
     Warning,
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct CheckResult {
     name: String,
     status: CheckStatus,
     message: String,
 }
 
-pub fn check_health() -> anyhow::Result<i32> {
+#[derive(Debug, Serialize)]
+struct DoctorOutput {
+    status: String,
+    summary: Summary,
+    checks: Vec<CheckResult>,
+}
+
+#[derive(Debug, Serialize)]
+struct Summary {
+    ok: usize,
+    warnings: usize,
+    errors: usize,
+}
+
+pub fn check_health(json: bool) -> anyhow::Result<i32> {
     let mut results = Vec::new();
     let mut has_errors = false;
     let mut has_warnings = false;
 
-    println!("Checking plugin manager health...\n");
+    if !json {
+        println!("Checking plugin manager health...\n");
+    }
 
     // Check configuration files
-    println!("Configuration Files:");
+    if !json {
+        println!("Configuration Files:");
+    }
     match check_manifest() {
         Ok(msg) => {
-            println!("  ✅ plugins.toml: {}", msg);
+            if !json {
+                println!("  ✅ plugins.toml: {}", msg);
+            }
             results.push(CheckResult {
                 name: "plugins.toml".to_string(),
                 status: CheckStatus::Ok,
@@ -40,7 +62,9 @@ pub fn check_health() -> anyhow::Result<i32> {
             });
         }
         Err(e) => {
-            println!("  ❌ plugins.toml: {}", e);
+            if !json {
+                println!("  ❌ plugins.toml: {}", e);
+            }
             results.push(CheckResult {
                 name: "plugins.toml".to_string(),
                 status: CheckStatus::Error,
@@ -52,7 +76,9 @@ pub fn check_health() -> anyhow::Result<i32> {
 
     match check_lockfile() {
         Ok((lockfile, msg)) => {
-            println!("  ✅ plugins.lock: {}", msg);
+            if !json {
+                println!("  ✅ plugins.lock: {}", msg);
+            }
             results.push(CheckResult {
                 name: "plugins.lock".to_string(),
                 status: CheckStatus::Ok,
@@ -60,8 +86,11 @@ pub fn check_health() -> anyhow::Result<i32> {
             });
 
             // Check plugin files
-            println!("\nPlugin Files:");
-            let (plugin_results, plugin_errors, plugin_warnings) = check_plugin_files(&lockfile);
+            if !json {
+                println!("\nPlugin Files:");
+            }
+            let (plugin_results, plugin_errors, plugin_warnings) =
+                check_plugin_files(&lockfile, json);
             results.extend(plugin_results);
             if plugin_errors {
                 has_errors = true;
@@ -71,15 +100,19 @@ pub fn check_health() -> anyhow::Result<i32> {
             }
 
             // Check unmanaged files
-            println!("\nUnmanaged Files:");
-            let (unmanaged_results, unmanaged_warnings) = check_unmanaged_files(&lockfile);
+            if !json {
+                println!("\nUnmanaged Files:");
+            }
+            let (unmanaged_results, unmanaged_warnings) = check_unmanaged_files(&lockfile, json);
             results.extend(unmanaged_results);
             if unmanaged_warnings {
                 has_warnings = true;
             }
         }
         Err(e) => {
-            println!("  ❌ plugins.lock: {}", e);
+            if !json {
+                println!("  ❌ plugins.lock: {}", e);
+            }
             results.push(CheckResult {
                 name: "plugins.lock".to_string(),
                 status: CheckStatus::Error,
@@ -90,7 +123,6 @@ pub fn check_health() -> anyhow::Result<i32> {
     }
 
     // Summary
-    println!("\nSummary:");
     let ok_count = results
         .iter()
         .filter(|r| matches!(r.status, CheckStatus::Ok))
@@ -104,18 +136,47 @@ pub fn check_health() -> anyhow::Result<i32> {
         .filter(|r| matches!(r.status, CheckStatus::Error))
         .count();
 
-    println!("  ✅ {} check(s) passed", ok_count);
-    if warning_count > 0 {
-        println!("  ⚠️  {} warning(s)", warning_count);
-    }
-    if error_count > 0 {
-        println!("  ❌ {} error(s)", error_count);
+    if json {
+        // Output JSON
+        let status = if has_errors {
+            "failure"
+        } else if has_warnings {
+            "drift"
+        } else {
+            "healthy"
+        };
+
+        let output = DoctorOutput {
+            status: status.to_string(),
+            summary: Summary {
+                ok: ok_count,
+                warnings: warning_count,
+                errors: error_count,
+            },
+            checks: results,
+        };
+
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        // Output human-readable format
+        println!("\nSummary:");
+        println!("  ✅ {} check(s) passed", ok_count);
+        if warning_count > 0 {
+            println!("  ⚠️  {} warning(s)", warning_count);
+        }
+        if error_count > 0 {
+            println!("  ❌ {} error(s)", error_count);
+        }
     }
 
+    // Deterministic exit codes:
+    // 0 = healthy (no errors, no warnings)
+    // 1 = drift (warnings present)
+    // 2 = failure (errors present)
     if has_errors {
-        Ok(1)
+        Ok(2)
     } else if has_warnings {
-        Ok(0) // Warnings don't fail the command
+        Ok(1)
     } else {
         Ok(0)
     }
@@ -148,7 +209,7 @@ fn check_lockfile() -> anyhow::Result<(Lockfile, String)> {
     ))
 }
 
-fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
+fn check_plugin_files(lockfile: &Lockfile, json: bool) -> (Vec<CheckResult>, bool, bool) {
     let mut results = Vec::new();
     let mut has_errors = false;
     let has_warnings = false;
@@ -164,7 +225,9 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
         if file_path.exists() {
             checks_passed += 1;
         } else {
-            println!("  ❌ {}: File not found ({})", plugin.name, plugin.file);
+            if !json {
+                println!("  ❌ {}: File not found ({})", plugin.name, plugin.file);
+            }
             results.push(CheckResult {
                 name: format!("plugin:{}", plugin.name),
                 status: CheckStatus::Error,
@@ -179,10 +242,12 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
         if file_path.file_name().and_then(|n| n.to_str()) == Some(&plugin.file) {
             checks_passed += 1;
         } else {
-            println!(
-                "  ❌ {}: Filename mismatch (expected: {})",
-                plugin.name, plugin.file
-            );
+            if !json {
+                println!(
+                    "  ❌ {}: Filename mismatch (expected: {})",
+                    plugin.name, plugin.file
+                );
+            }
             results.push(CheckResult {
                 name: format!("plugin:{}", plugin.name),
                 status: CheckStatus::Error,
@@ -200,7 +265,9 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
                     if computed_hash == plugin.hash {
                         checks_passed += 1;
                     } else {
-                        println!("  ❌ {}: Hash mismatch", plugin.name);
+                        if !json {
+                            println!("  ❌ {}: Hash mismatch", plugin.name);
+                        }
                         results.push(CheckResult {
                             name: format!("plugin:{}", plugin.name),
                             status: CheckStatus::Error,
@@ -211,7 +278,9 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
                     }
                 }
                 Err(e) => {
-                    println!("  ❌ {}: Failed to compute hash: {}", plugin.name, e);
+                    if !json {
+                        println!("  ❌ {}: Failed to compute hash: {}", plugin.name, e);
+                    }
                     results.push(CheckResult {
                         name: format!("plugin:{}", plugin.name),
                         status: CheckStatus::Error,
@@ -222,7 +291,9 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
                 }
             },
             Err(e) => {
-                println!("  ❌ {}: Failed to parse hash: {}", plugin.name, e);
+                if !json {
+                    println!("  ❌ {}: Failed to parse hash: {}", plugin.name, e);
+                }
                 results.push(CheckResult {
                     name: format!("plugin:{}", plugin.name),
                     status: CheckStatus::Error,
@@ -235,10 +306,12 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
 
         // All checks passed
         if checks_passed == checks_total {
-            println!(
-                "  ✅ {}: File exists, filename matches, hash verified",
-                plugin.name
-            );
+            if !json {
+                println!(
+                    "  ✅ {}: File exists, filename matches, hash verified",
+                    plugin.name
+                );
+            }
             results.push(CheckResult {
                 name: format!("plugin:{}", plugin.name),
                 status: CheckStatus::Ok,
@@ -250,7 +323,7 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
     (results, has_errors, has_warnings)
 }
 
-fn check_unmanaged_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool) {
+fn check_unmanaged_files(lockfile: &Lockfile, json: bool) -> (Vec<CheckResult>, bool) {
     let mut results = Vec::new();
     let mut has_warnings = false;
     let plugins_dir = config::plugins_dir();
@@ -272,7 +345,9 @@ fn check_unmanaged_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool) {
                 if path.is_file() {
                     if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                         if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                            println!("  ⚠️  Unmanaged file: {}", filename);
+                            if !json {
+                                println!("  ⚠️  Unmanaged file: {}", filename);
+                            }
                             results.push(CheckResult {
                                 name: format!("unmanaged:{}", filename),
                                 status: CheckStatus::Warning,
@@ -286,7 +361,7 @@ fn check_unmanaged_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool) {
         }
     }
 
-    if !has_warnings {
+    if !has_warnings && !json {
         println!("  ✅ No unmanaged .jar files found");
     }
 

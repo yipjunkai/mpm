@@ -133,8 +133,8 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Sync => {
             sync::sync_plugins().await?;
         }
-        cli::Commands::Doctor => {
-            let exit_code = doctor::check_health()?;
+        cli::Commands::Doctor { json } => {
+            let exit_code = doctor::check_health(json)?;
             std::process::exit(exit_code);
         }
         cli::Commands::Import => {

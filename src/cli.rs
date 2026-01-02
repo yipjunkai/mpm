@@ -25,6 +25,10 @@ pub enum Commands {
     },
     Lock,
     Sync,
-    Doctor,
+    Doctor {
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
     Import,
 }

@@ -552,10 +552,10 @@ fn test_doctor_detects_unmanaged_files() {
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
-    // Doctor should still pass (warnings don't fail), but detect unmanaged file
+    // Doctor should fail with exit code 1 (drift) when warnings are present
     assert!(
-        success,
-        "Doctor should pass with warnings. output: {}",
+        !success,
+        "Doctor should fail with warnings (drift). output: {}",
         output
     );
     assert!(
@@ -622,6 +622,94 @@ fn test_doctor_passes_after_sync() {
         "Expected all checks to pass in output: {}",
         output
     );
+}
+
+#[test]
+fn test_doctor_json_output_healthy() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    let (success, output, _) = run_command(&["doctor", "--json"], test_dir);
+
+    assert!(success, "Doctor should pass. output: {}", output);
+
+    // Extract JSON from output (JSON should be in stdout, may have trailing stderr)
+    let json_start = output.find('{').expect("Should contain JSON");
+    let json_str = &output[json_start..];
+    // Find the end of JSON (last closing brace)
+    let json_end = json_str.rfind('}').expect("Should have closing brace") + 1;
+    let json_str = &json_str[..json_end];
+
+    let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
+    assert_eq!(json["status"], "healthy");
+    assert!(json["summary"]["ok"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn test_doctor_json_output_drift() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    // Add an unmanaged file to create drift
+    let unmanaged_file = format!("{}/plugins/unmanaged-plugin.jar", test_dir);
+    fs::write(&unmanaged_file, b"fake plugin").unwrap();
+
+    let (success, output, _) = run_command(&["doctor", "--json"], test_dir);
+
+    assert!(
+        !success,
+        "Doctor should fail with drift. output: {}",
+        output
+    );
+
+    // Extract JSON from output
+    let json_start = output.find('{').expect("Should contain JSON");
+    let json_str = &output[json_start..];
+    let json_end = json_str.rfind('}').expect("Should have closing brace") + 1;
+    let json_str = &json_str[..json_end];
+
+    let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
+    assert_eq!(json["status"], "drift");
+    assert!(json["summary"]["warnings"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn test_doctor_json_output_failure() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    // Don't sync - files should be missing
+
+    let (success, output, _) = run_command(&["doctor", "--json"], test_dir);
+
+    assert!(
+        !success,
+        "Doctor should fail with errors. output: {}",
+        output
+    );
+
+    // Extract JSON from output
+    let json_start = output.find('{').expect("Should contain JSON");
+    let json_str = &output[json_start..];
+    let json_end = json_str.rfind('}').expect("Should have closing brace") + 1;
+    let json_str = &json_str[..json_end];
+
+    let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
+    assert_eq!(json["status"], "failure");
+    assert!(json["summary"]["errors"].as_u64().unwrap() > 0);
 }
 
 #[test]
