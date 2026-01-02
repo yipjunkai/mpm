@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod doctor;
 mod error;
 mod lockfile;
 mod manifest;
@@ -130,6 +131,10 @@ async fn main() -> anyhow::Result<()> {
         }
         cli::Commands::Sync => {
             sync::sync_plugins().await?;
+        }
+        cli::Commands::Doctor => {
+            let exit_code = doctor::check_health()?;
+            std::process::exit(exit_code);
         }
     }
 

@@ -88,7 +88,7 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn verify_plugin_hash(file_path: &Path, algorithm: &str) -> anyhow::Result<String> {
+pub fn verify_plugin_hash(file_path: &Path, algorithm: &str) -> anyhow::Result<String> {
     let data = fs::read(file_path)?;
     let hash_hex = match algorithm {
         "sha256" => {

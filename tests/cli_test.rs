@@ -430,6 +430,178 @@ fn test_lock_deterministic_multiple_runs() {
 }
 
 #[test]
+fn test_doctor_fails_without_lockfile() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    assert!(!success, "Doctor should fail without lockfile. output: {}", output);
+    assert!(
+        output.contains("plugins.lock") && output.contains("not found"),
+        "Expected error message about lockfile in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_doctor_passes_with_synced_plugins() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    assert!(success, "Doctor should pass with synced plugins. output: {}", output);
+    assert!(
+        output.contains("✅") && output.contains("check(s) passed"),
+        "Expected success markers in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_doctor_detects_missing_files() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    // Don't sync - files should be missing
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    assert!(!success, "Doctor should fail with missing files. output: {}", output);
+    assert!(
+        output.contains("File not found") || output.contains("❌"),
+        "Expected error about missing file in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_doctor_detects_hash_mismatch() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    // Corrupt a plugin file
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    let filename_line = lockfile_content
+        .lines()
+        .find(|l| l.contains("file ="))
+        .unwrap();
+    let filename = filename_line
+        .split('"')
+        .nth(1)
+        .unwrap();
+    let plugin_path = format!("{}/{}", test_dir, filename);
+    fs::write(&plugin_path, b"corrupted content").unwrap();
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    assert!(!success, "Doctor should fail with hash mismatch. output: {}", output);
+    assert!(
+        output.contains("Hash mismatch") || output.contains("❌"),
+        "Expected hash mismatch error in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_doctor_detects_unmanaged_files() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    // Add an unmanaged file
+    let unmanaged_file = format!("{}/unmanaged-plugin.jar", test_dir);
+    fs::write(&unmanaged_file, b"fake plugin").unwrap();
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    // Doctor should still pass (warnings don't fail), but detect unmanaged file
+    assert!(success, "Doctor should pass with warnings. output: {}", output);
+    assert!(
+        output.contains("Unmanaged file") || output.contains("⚠️"),
+        "Expected warning about unmanaged file in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_doctor_detects_wrong_filename() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    // Rename a plugin file to wrong name
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    let filename_line = lockfile_content
+        .lines()
+        .find(|l| l.contains("file ="))
+        .unwrap();
+    let filename = filename_line
+        .split('"')
+        .nth(1)
+        .unwrap();
+    let plugin_path = format!("{}/{}", test_dir, filename);
+    let wrong_path = format!("{}/wrong-name.jar", test_dir);
+    fs::rename(&plugin_path, &wrong_path).unwrap();
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    assert!(!success, "Doctor should fail with wrong filename. output: {}", output);
+    assert!(
+        output.contains("not found") || output.contains("Filename mismatch") || output.contains("❌"),
+        "Expected error about filename in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_doctor_passes_after_sync() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["add", "modrinth:worldedit"], test_dir);
+    run_command(&["lock"], test_dir);
+    run_command(&["sync"], test_dir);
+
+    let (success, output, _) = run_command(&["doctor"], test_dir);
+
+    assert!(success, "Doctor should pass after sync. output: {}", output);
+    assert!(
+        output.contains("✅") && !output.contains("❌"),
+        "Expected all checks to pass in output: {}",
+        output
+    );
+}
+
+#[test]
 fn test_sync_fails_without_lockfile() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
