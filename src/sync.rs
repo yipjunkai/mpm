@@ -11,7 +11,7 @@ pub async fn sync_plugins() -> anyhow::Result<()> {
     let lockfile = Lockfile::load()
         .map_err(|_| anyhow::anyhow!("Lockfile not found. Run 'pm lock' first."))?;
 
-    let plugins_dir = config::config_dir();
+    let plugins_dir = config::plugins_dir();
     let staging_dir = format!("{}/.plugins.staging", plugins_dir);
     let backup_dir = format!("{}/.plugins.backup", plugins_dir);
 

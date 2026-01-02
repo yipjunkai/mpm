@@ -438,7 +438,11 @@ fn test_doctor_fails_without_lockfile() {
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
-    assert!(!success, "Doctor should fail without lockfile. output: {}", output);
+    assert!(
+        !success,
+        "Doctor should fail without lockfile. output: {}",
+        output
+    );
     assert!(
         output.contains("plugins.lock") && output.contains("not found"),
         "Expected error message about lockfile in output: {}",
@@ -458,7 +462,11 @@ fn test_doctor_passes_with_synced_plugins() {
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
-    assert!(success, "Doctor should pass with synced plugins. output: {}", output);
+    assert!(
+        success,
+        "Doctor should pass with synced plugins. output: {}",
+        output
+    );
     assert!(
         output.contains("✅") && output.contains("check(s) passed"),
         "Expected success markers in output: {}",
@@ -478,7 +486,11 @@ fn test_doctor_detects_missing_files() {
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
-    assert!(!success, "Doctor should fail with missing files. output: {}", output);
+    assert!(
+        !success,
+        "Doctor should fail with missing files. output: {}",
+        output
+    );
     assert!(
         output.contains("File not found") || output.contains("❌"),
         "Expected error about missing file in output: {}",
@@ -503,16 +515,17 @@ fn test_doctor_detects_hash_mismatch() {
         .lines()
         .find(|l| l.contains("file ="))
         .unwrap();
-    let filename = filename_line
-        .split('"')
-        .nth(1)
-        .unwrap();
-    let plugin_path = format!("{}/{}", test_dir, filename);
+    let filename = filename_line.split('"').nth(1).unwrap();
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
     fs::write(&plugin_path, b"corrupted content").unwrap();
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
-    assert!(!success, "Doctor should fail with hash mismatch. output: {}", output);
+    assert!(
+        !success,
+        "Doctor should fail with hash mismatch. output: {}",
+        output
+    );
     assert!(
         output.contains("Hash mismatch") || output.contains("❌"),
         "Expected hash mismatch error in output: {}",
@@ -531,13 +544,17 @@ fn test_doctor_detects_unmanaged_files() {
     run_command(&["sync"], test_dir);
 
     // Add an unmanaged file
-    let unmanaged_file = format!("{}/unmanaged-plugin.jar", test_dir);
+    let unmanaged_file = format!("{}/plugins/unmanaged-plugin.jar", test_dir);
     fs::write(&unmanaged_file, b"fake plugin").unwrap();
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
     // Doctor should still pass (warnings don't fail), but detect unmanaged file
-    assert!(success, "Doctor should pass with warnings. output: {}", output);
+    assert!(
+        success,
+        "Doctor should pass with warnings. output: {}",
+        output
+    );
     assert!(
         output.contains("Unmanaged file") || output.contains("⚠️"),
         "Expected warning about unmanaged file in output: {}",
@@ -562,19 +579,22 @@ fn test_doctor_detects_wrong_filename() {
         .lines()
         .find(|l| l.contains("file ="))
         .unwrap();
-    let filename = filename_line
-        .split('"')
-        .nth(1)
-        .unwrap();
-    let plugin_path = format!("{}/{}", test_dir, filename);
-    let wrong_path = format!("{}/wrong-name.jar", test_dir);
+    let filename = filename_line.split('"').nth(1).unwrap();
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
+    let wrong_path = format!("{}/plugins/wrong-name.jar", test_dir);
     fs::rename(&plugin_path, &wrong_path).unwrap();
 
     let (success, output, _) = run_command(&["doctor"], test_dir);
 
-    assert!(!success, "Doctor should fail with wrong filename. output: {}", output);
     assert!(
-        output.contains("not found") || output.contains("Filename mismatch") || output.contains("❌"),
+        !success,
+        "Doctor should fail with wrong filename. output: {}",
+        output
+    );
+    assert!(
+        output.contains("not found")
+            || output.contains("Filename mismatch")
+            || output.contains("❌"),
         "Expected error about filename in output: {}",
         output
     );
@@ -651,7 +671,7 @@ fn test_sync_downloads_plugins() {
         .unwrap();
     let filename = filename_line.split('"').nth(1).unwrap();
 
-    let plugin_path = format!("{}/{}", test_dir, filename);
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
     assert!(
         Path::new(&plugin_path).exists(),
         "Plugin file should be created: {}",
@@ -680,7 +700,7 @@ fn test_sync_is_idempotent() {
         .find(|l| l.contains("file ="))
         .unwrap();
     let filename = filename_line.split('"').nth(1).unwrap();
-    let plugin_path = format!("{}/{}", test_dir, filename);
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
     let metadata1 = fs::metadata(&plugin_path).unwrap();
 
     // Second sync should skip downloads
@@ -712,7 +732,7 @@ fn test_sync_removes_unmanaged_files() {
     run_command(&["sync"], test_dir);
 
     // Add an unmanaged file
-    let unmanaged_file = format!("{}/unmanaged-plugin.jar", test_dir);
+    let unmanaged_file = format!("{}/plugins/unmanaged-plugin.jar", test_dir);
     fs::write(&unmanaged_file, b"fake plugin content").unwrap();
     assert!(
         Path::new(&unmanaged_file).exists(),
@@ -804,7 +824,7 @@ fn test_sync_full_workflow() {
         .collect();
 
     for filename in filenames {
-        let plugin_path = format!("{}/{}", test_dir, filename);
+        let plugin_path = format!("{}/plugins/{}", test_dir, filename);
         assert!(
             Path::new(&plugin_path).exists(),
             "Plugin file should exist: {}",

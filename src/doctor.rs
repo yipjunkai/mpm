@@ -152,7 +152,7 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
     let mut results = Vec::new();
     let mut has_errors = false;
     let has_warnings = false;
-    let plugins_dir = config::config_dir();
+    let plugins_dir = config::plugins_dir();
 
     for plugin in &lockfile.plugin {
         let file_path = Path::new(&plugins_dir).join(&plugin.file);
@@ -253,7 +253,7 @@ fn check_plugin_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool, bool) {
 fn check_unmanaged_files(lockfile: &Lockfile) -> (Vec<CheckResult>, bool) {
     let mut results = Vec::new();
     let mut has_warnings = false;
-    let plugins_dir = config::config_dir();
+    let plugins_dir = config::plugins_dir();
     let plugins_path = Path::new(&plugins_dir);
 
     if !plugins_path.exists() {
