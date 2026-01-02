@@ -4,7 +4,7 @@ use crate::config;
 use crate::constants;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
-use crate::sync::verify_plugin_hash;
+use crate::commands::sync::verify_plugin_hash;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;

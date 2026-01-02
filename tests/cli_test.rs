@@ -443,9 +443,10 @@ fn test_lock_dry_run_previews_changes() {
 
     let (success, output, _) = run_command(&["lock", "--dry-run"], test_dir);
 
+    // Exit code 1 = changes detected (no lockfile exists, so it would be created)
     assert!(
-        success,
-        "Lock --dry-run command should succeed. output: {}",
+        !success,
+        "Lock --dry-run should exit with code 1 (changes detected). output: {}",
         output
     );
     assert!(
@@ -477,9 +478,10 @@ fn test_lock_dry_run_vs_normal_lock() {
 
     // Run lock --dry-run first
     let (success1, output1, _) = run_command(&["lock", "--dry-run"], test_dir);
+    // Exit code 1 = changes detected (no lockfile exists, so it would be created)
     assert!(
-        success1,
-        "Lock --dry-run should succeed. output: {}",
+        !success1,
+        "Lock --dry-run should exit with code 1 (changes detected). output: {}",
         output1
     );
 
@@ -1012,9 +1014,10 @@ fn test_sync_dry_run_previews_changes() {
 
     let (success, output, _) = run_command(&["sync", "--dry-run"], test_dir);
 
+    // Exit code 1 = changes detected (plugins need to be downloaded)
     assert!(
-        success,
-        "Sync --dry-run command should succeed. output: {}",
+        !success,
+        "Sync --dry-run should exit with code 1 (changes detected). output: {}",
         output
     );
     assert!(
@@ -1056,7 +1059,12 @@ fn test_sync_dry_run_shows_unmanaged_files() {
 
     let (success, output, _) = run_command(&["sync", "--dry-run"], test_dir);
 
-    assert!(success, "Sync --dry-run should succeed. output: {}", output);
+    // Exit code 1 = changes detected (unmanaged file would be removed)
+    assert!(
+        !success,
+        "Sync --dry-run should exit with code 1 (changes detected). output: {}",
+        output
+    );
     assert!(
         output.contains("Would remove unmanaged file") || output.contains("unmanaged-plugin"),
         "Expected unmanaged file warning in output: {}",
@@ -1082,9 +1090,10 @@ fn test_sync_dry_run_vs_normal_sync() {
 
     // Run sync --dry-run first
     let (success1, output1, _) = run_command(&["sync", "--dry-run"], test_dir);
+    // Exit code 1 = changes detected (plugins need to be downloaded)
     assert!(
-        success1,
-        "Sync --dry-run should succeed. output: {}",
+        !success1,
+        "Sync --dry-run should exit with code 1 (changes detected). output: {}",
         output1
     );
     assert!(
