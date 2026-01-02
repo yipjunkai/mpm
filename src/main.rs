@@ -23,21 +23,27 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Remove { spec } => {
             commands::remove::remove(spec)?;
         }
-        cli::Commands::Lock { dry_run } => {
-            if let Some(exit_code) = commands::lock::lock(dry_run).await? {
-                std::process::exit(exit_code);
+        cli::Commands::Lock { dry_run } => match commands::lock::lock(dry_run).await {
+            Ok(exit_code) => std::process::exit(exit_code),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(2);
             }
-        }
-        cli::Commands::Sync { dry_run } => {
-            let exit_code = commands::sync::sync_plugins(dry_run).await?;
-            if dry_run {
-                std::process::exit(exit_code);
+        },
+        cli::Commands::Sync { dry_run } => match commands::sync::sync_plugins(dry_run).await {
+            Ok(exit_code) => std::process::exit(exit_code),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(2);
             }
-        }
-        cli::Commands::Doctor { json } => {
-            let exit_code = commands::doctor::check_health(json)?;
-            std::process::exit(exit_code);
-        }
+        },
+        cli::Commands::Doctor { json } => match commands::doctor::check_health(json) {
+            Ok(exit_code) => std::process::exit(exit_code),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(2);
+            }
+        },
         cli::Commands::Import => {
             commands::import::import_plugins()?;
         }

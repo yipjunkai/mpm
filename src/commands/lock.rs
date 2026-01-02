@@ -5,7 +5,7 @@ use crate::manifest::Manifest;
 use crate::sources::modrinth;
 use toml;
 
-pub async fn lock(dry_run: bool) -> anyhow::Result<Option<i32>> {
+pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
     // Load manifest
     let manifest = Manifest::load()
         .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
@@ -44,7 +44,10 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<Option<i32>> {
     // Sort plugins by name
     lockfile.sort_by_name();
 
-    // Save lockfile
+    // Exit codes:
+    // 0 = healthy, no issues
+    // 1 = warnings only (changes detected in dry-run)
+    // 2 = errors present
     if dry_run {
         println!("[DRY RUN] Would lock {} plugin(s)", lockfile.plugin.len());
 
@@ -55,9 +58,9 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<Option<i32>> {
                 let new_content = toml::to_string_pretty(&lockfile)?;
                 let existing_content = toml::to_string_pretty(&existing_lockfile)?;
                 if new_content == existing_content {
-                    0 // Lockfile already matches (no changes)
+                    0 // No changes needed
                 } else {
-                    1 // Lockfile would change
+                    1 // Changes detected
                 }
             }
             Err(_) => {
@@ -65,10 +68,10 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<Option<i32>> {
                 1
             }
         };
-        Ok(Some(exit_code))
+        Ok(exit_code)
     } else {
         lockfile.save()?;
         println!("Locked {} plugin(s)", lockfile.plugin.len());
-        Ok(None)
+        Ok(0) // Success
     }
 }

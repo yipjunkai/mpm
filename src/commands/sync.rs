@@ -7,9 +7,19 @@ use std::fs;
 use std::path::Path;
 
 pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
+    // Exit codes:
+    // 0 = healthy, no issues
+    // 1 = warnings only (changes detected in dry-run)
+    // 2 = errors present
+
     // Load lockfile
-    let lockfile = Lockfile::load()
-        .map_err(|_| anyhow::anyhow!("Lockfile not found. Run 'pm lock' first."))?;
+    let lockfile = match Lockfile::load() {
+        Ok(lockfile) => lockfile,
+        Err(_) => {
+            eprintln!("Error: Lockfile not found. Run 'pm lock' first.");
+            return Ok(2);
+        }
+    };
 
     let plugins_dir = config::plugins_dir();
 
@@ -22,17 +32,29 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
 
     // Clean up any leftover staging/backup directories
     if !dry_run {
-        cleanup_temp_dirs(&plugins_dir)?;
+        if let Err(e) = cleanup_temp_dirs(&plugins_dir) {
+            eprintln!("Error: Failed to cleanup temp directories: {}", e);
+            return Ok(2);
+        }
     }
 
     // Create staging directory
     if !dry_run {
-        fs::create_dir_all(&staging_dir)?;
+        if let Err(e) = fs::create_dir_all(&staging_dir) {
+            eprintln!("Error: Failed to create staging directory: {}", e);
+            return Ok(2);
+        }
     }
 
     // Create backup of current plugins directory
     let _backup_created = if !dry_run {
-        create_backup(&plugins_dir, &backup_dir)?
+        match create_backup(&plugins_dir, &backup_dir) {
+            Ok(created) => created,
+            Err(e) => {
+                eprintln!("Error: Failed to create backup: {}", e);
+                return Ok(2);
+            }
+        }
     } else {
         false
     };
@@ -118,27 +140,44 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     }
     .await;
 
-    // Cleanup and restore on error
-    if !dry_run && result.is_err() && needs_restore {
-        restore_backup(&plugins_dir, &backup_dir)?;
-    }
+    // Handle result and cleanup
+    let has_changes = match result {
+        Ok(changes) => changes,
+        Err(e) => {
+            // Error occurred - cleanup and return exit code 2
+            eprintln!("Error: {}", e);
+
+            // Cleanup and restore on error
+            if !dry_run && needs_restore {
+                if let Err(restore_err) = restore_backup(&plugins_dir, &backup_dir) {
+                    eprintln!("Warning: Failed to restore backup: {}", restore_err);
+                }
+            }
+
+            // Clean up staging and backup directories
+            if !dry_run {
+                let _ = cleanup_temp_dirs(&plugins_dir);
+            }
+
+            return Ok(2);
+        }
+    };
 
     // Clean up staging and backup directories
     if !dry_run {
-        cleanup_temp_dirs(&plugins_dir)?;
+        if let Err(e) = cleanup_temp_dirs(&plugins_dir) {
+            eprintln!("Warning: Failed to cleanup temp directories: {}", e);
+            // Don't fail on cleanup, but log it
+        }
     }
-
-    // If there was an error, return error exit code
-    let has_changes = result?;
 
     if dry_run {
         println!("[DRY RUN] Would sync {} plugin(s)", lockfile.plugin.len());
-        // Return exit code: 0 = no changes, 1 = changes would be applied
+        // Return exit code: 0 = no changes, 1 = changes detected
         Ok(if has_changes { 1 } else { 0 })
     } else {
         println!("Synced {} plugin(s)", lockfile.plugin.len());
-        // For non-dry-run, always return 0 on success
-        Ok(0)
+        Ok(0) // Success
     }
 }
 
