@@ -4,6 +4,7 @@ mod error;
 mod lockfile;
 mod manifest;
 mod sources;
+mod sync;
 
 use clap::Parser;
 use cli::Cli;
@@ -128,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Locked {} plugin(s)", lockfile.plugin.len());
         }
         cli::Commands::Sync => {
-            println!("Sync command not implemented yet");
+            sync::sync_plugins().await?;
         }
     }
 
