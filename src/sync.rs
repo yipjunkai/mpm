@@ -285,7 +285,7 @@ fn atomic_replace(plugins_dir: &str, staging_dir: &str, _backup_dir: &str) -> an
             for entry in entries {
                 let entry = entry?;
                 let path = entry.path();
-                // Only remove .jar files that are being replaced, preserve plugins.toml and plugins.lock
+                // Only remove .jar files that are being replaced, preserve manifest and lockfile
                 if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar") {
                     if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                         if staged_files.contains(filename) {

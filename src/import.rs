@@ -1,6 +1,7 @@
 // Import module for importing existing plugins from /plugins directory
 
 use crate::config;
+use crate::constants;
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::{Manifest, Minecraft, PluginSpec};
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ struct PluginYml {
 pub fn import_plugins() -> anyhow::Result<()> {
     // Check if plugins.toml already exists
     if Manifest::load().is_ok() {
-        anyhow::bail!("plugins.toml already exists. Remove it first before importing.");
+        anyhow::bail!("{} already exists. Remove it first before importing.", constants::MANIFEST_FILE);
     }
 
     let plugins_dir = config::plugins_dir();
@@ -37,7 +38,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
         // Create empty manifest and lockfile
         let manifest = Manifest {
             minecraft: Minecraft {
-                version: "1.21.11".to_string(), // Default version
+                version: constants::DEFAULT_MC_VERSION.to_string(), // Default version
             },
             plugins: BTreeMap::new(),
         };
@@ -46,7 +47,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
         let lockfile = Lockfile::new();
         lockfile.save()?;
 
-        println!("Created empty plugins.toml and plugins.lock");
+        println!("Created empty {} and {}", constants::MANIFEST_FILE, constants::LOCKFILE_FILE);
         return Ok(());
     }
 
@@ -65,7 +66,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
 
     let manifest = Manifest {
         minecraft: Minecraft {
-            version: "1.21.11".to_string(), // Default version, could be detected later
+            version: constants::DEFAULT_MC_VERSION.to_string(), // Default version, could be detected later
         },
         plugins: manifest_plugins,
     };

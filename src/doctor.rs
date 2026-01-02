@@ -53,20 +53,20 @@ pub fn check_health(json: bool) -> anyhow::Result<i32> {
     match check_manifest() {
         Ok(msg) => {
             if !json {
-                println!("  ✅ plugins.toml: {}", msg);
+                println!("  ✅ {}: {}", crate::constants::MANIFEST_FILE, msg);
             }
             results.push(CheckResult {
-                name: "plugins.toml".to_string(),
+                name: crate::constants::MANIFEST_FILE.to_string(),
                 status: CheckStatus::Ok,
                 message: msg,
             });
         }
         Err(e) => {
             if !json {
-                println!("  ❌ plugins.toml: {}", e);
+                println!("  ❌ {}: {}", crate::constants::MANIFEST_FILE, e);
             }
             results.push(CheckResult {
-                name: "plugins.toml".to_string(),
+                name: crate::constants::MANIFEST_FILE.to_string(),
                 status: CheckStatus::Error,
                 message: e.to_string(),
             });
@@ -77,10 +77,10 @@ pub fn check_health(json: bool) -> anyhow::Result<i32> {
     match check_lockfile() {
         Ok((lockfile, msg)) => {
             if !json {
-                println!("  ✅ plugins.lock: {}", msg);
+                println!("  ✅ {}: {}", crate::constants::LOCKFILE_FILE, msg);
             }
             results.push(CheckResult {
-                name: "plugins.lock".to_string(),
+                name: crate::constants::LOCKFILE_FILE.to_string(),
                 status: CheckStatus::Ok,
                 message: msg,
             });
@@ -111,10 +111,10 @@ pub fn check_health(json: bool) -> anyhow::Result<i32> {
         }
         Err(e) => {
             if !json {
-                println!("  ❌ plugins.lock: {}", e);
+                println!("  ❌ {}: {}", crate::constants::LOCKFILE_FILE, e);
             }
             results.push(CheckResult {
-                name: "plugins.lock".to_string(),
+                name: crate::constants::LOCKFILE_FILE.to_string(),
                 status: CheckStatus::Error,
                 message: e.to_string(),
             });

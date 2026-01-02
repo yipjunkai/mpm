@@ -1,5 +1,6 @@
 // CLI module for handling command-line interface
 
+use crate::constants;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -22,7 +23,7 @@ pub enum Commands {
     /// This is the first step to start managing plugins with mpm.
     Init {
         /// Minecraft version (e.g., 1.20.2)
-        #[arg(default_value = "1.21.11")]
+        #[arg(default_value = constants::DEFAULT_MC_VERSION)]
         version: String,
     },
     /// Add a plugin to the manifest

@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod constants;
 mod doctor;
 mod error;
 mod import;
@@ -36,7 +37,8 @@ async fn main() -> anyhow::Result<()> {
 
             manifest.save()?;
             println!(
-                "Initialized plugins.toml with Minecraft version {}",
+                "Initialized {} with Minecraft version {}",
+                constants::MANIFEST_FILE,
                 version
             );
         }
