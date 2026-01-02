@@ -7,7 +7,7 @@ mod sources;
 use clap::Parser;
 use cli::Cli;
 
-use manifest::{Manifest, Minecraft};
+use manifest::{Manifest, Minecraft, PluginSpec};
 use sources::modrinth;
 
 #[tokio::main]
@@ -16,15 +16,26 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         cli::Commands::Init => {
-            let manifest = Manifest {
+            let mut manifest = Manifest {
                 minecraft: Minecraft {
                     version: "1.20.2".into(),
                 },
                 plugins: Default::default(),
             };
 
+            // Test adding a plugin to the manifest
+            println!("Testing adding plugin to manifest...");
+            manifest.plugins.insert(
+                "fabric-api".to_string(),
+                PluginSpec {
+                    source: "modrinth".to_string(),
+                    id: "fabric-api".to_string(),
+                    version: None,
+                },
+            );
+
             manifest.save()?;
-            println!("Created plugins.toml");
+            println!("Created plugins.toml with test plugin");
 
             let loaded_manifest = Manifest::load()?;
             println!("Loaded plugins.toml: {:?}", loaded_manifest);
