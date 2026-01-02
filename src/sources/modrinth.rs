@@ -13,6 +13,7 @@ pub struct Project {
 pub struct Version {
     pub id: String,
     pub version_number: String,
+    pub date_published: String,
     pub files: Vec<VersionFile>,
 }
 
@@ -50,7 +51,7 @@ pub async fn resolve_version(
     let project = get_project(project_id).await?;
 
     // Get all versions
-    let versions = get_versions(&project.id).await?;
+    let mut versions = get_versions(&project.id).await?;
 
     let version = if let Some(version_str) = requested_version {
         // Find the specific version
@@ -65,7 +66,11 @@ pub async fn resolve_version(
                 )
             })?
     } else {
-        // Get the latest version (first in the list, usually sorted by date)
+        // Get the latest version - sort by date_published descending to ensure determinism
+        versions.sort_by(|a, b| {
+            // Sort by date_published descending (newest first)
+            b.date_published.cmp(&a.date_published)
+        });
         versions
             .first()
             .ok_or_else(|| anyhow::anyhow!("No versions found for project '{}'", project_id))?

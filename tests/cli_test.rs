@@ -296,3 +296,135 @@ fn test_add_and_remove_workflow() {
     assert!(!content.contains("fabric-api"));
     assert!(content.contains("worldedit"));
 }
+
+#[test]
+fn test_lock_creates_lockfile() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    // Init and add plugins
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    let (success, output, _) = run_command(&["lock"], test_dir);
+
+    assert!(success, "Lock command should succeed. output: {}", output);
+    assert!(output.contains("Locked"));
+
+    // Verify lockfile was created
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        Path::new(&lockfile_path).exists(),
+        "Lockfile should be created"
+    );
+
+    // Verify lockfile content
+    let content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(content.contains("fabric-api"));
+    assert!(content.contains("modrinth"));
+    assert!(content.contains("version"));
+    assert!(content.contains("url"));
+    assert!(content.contains("sha256"));
+}
+
+#[test]
+fn test_lock_with_specified_version() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    let (success, _, _) = run_command(&["lock"], test_dir);
+    assert!(success);
+
+    // Get the version from lockfile
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let content1 = fs::read_to_string(&lockfile_path).unwrap();
+
+    // Run lock again - should produce same result (deterministic)
+    run_command(&["lock"], test_dir);
+    let content2 = fs::read_to_string(&lockfile_path).unwrap();
+
+    assert_eq!(content1, content2, "Lockfile should be deterministic");
+}
+
+#[test]
+fn test_lock_sorts_plugins() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    // Add plugins in non-alphabetical order
+    run_command(&["add", "modrinth:worldedit"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    let (success, _, _) = run_command(&["lock"], test_dir);
+    assert!(success);
+
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let content = fs::read_to_string(&lockfile_path).unwrap();
+
+    // Find positions of plugin names
+    let fabric_pos = content.find("fabric-api").unwrap();
+    let worldedit_pos = content.find("worldedit").unwrap();
+
+    // fabric-api should come before worldedit (alphabetically)
+    assert!(
+        fabric_pos < worldedit_pos,
+        "Plugins should be sorted alphabetically"
+    );
+}
+
+#[test]
+fn test_lock_fails_without_init() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    let (success, output, _) = run_command(&["lock"], test_dir);
+
+    assert!(
+        !success,
+        "Lock should fail without init. output: {}",
+        output
+    );
+    assert!(
+        output.contains("Manifest not found") || output.contains("Run 'pm init' first"),
+        "Expected error message in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_lock_deterministic_multiple_runs() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+    run_command(&["add", "modrinth:worldedit"], test_dir);
+
+    // Run lock multiple times
+    run_command(&["lock"], test_dir);
+    let content1 = fs::read_to_string(&format!("{}/plugins.lock", test_dir)).unwrap();
+
+    run_command(&["lock"], test_dir);
+    let content2 = fs::read_to_string(&format!("{}/plugins.lock", test_dir)).unwrap();
+
+    run_command(&["lock"], test_dir);
+    let content3 = fs::read_to_string(&format!("{}/plugins.lock", test_dir)).unwrap();
+
+    // All runs should produce identical lockfiles
+    assert_eq!(
+        content1, content2,
+        "First and second lock should be identical"
+    );
+    assert_eq!(
+        content2, content3,
+        "Second and third lock should be identical"
+    );
+    assert_eq!(
+        content1, content3,
+        "First and third lock should be identical"
+    );
+}
