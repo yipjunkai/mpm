@@ -1,375 +1,406 @@
 // Doctor module for health checking
 
+use crate::commands::sync::verify_plugin_hash;
 use crate::config;
 use crate::constants;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
-use crate::commands::sync::verify_plugin_hash;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum CheckStatus {
-    Ok,
-    Warning,
-    Error,
+#[derive(Debug, Serialize)]
+struct Issue {
+    severity: String,
+    code: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct CheckResult {
-    name: String,
-    status: CheckStatus,
-    message: String,
+#[derive(Debug, Serialize)]
+struct ManifestInfo {
+    present: bool,
+    valid: bool,
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LockfileInfo {
+    present: bool,
+    valid: bool,
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PluginsInfo {
+    directory_present: bool,
+    installed: usize,
+    expected: usize,
+    missing: Vec<String>,
+    hash_mismatch: Vec<String>,
+    unmanaged: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct DoctorOutput {
-    /// Schema version for the JSON output format.
-    /// Increment only on breaking changes to ensure future integrations can safely evolve.
-    /// See constants::SCHEMA_VERSION for the current version.
     schema_version: u32,
     status: String,
-    summary: Summary,
-    checks: Vec<CheckResult>,
-}
-
-#[derive(Debug, Serialize)]
-struct Summary {
-    ok: usize,
-    warnings: usize,
-    errors: usize,
+    exit_code: i32,
+    manifest: ManifestInfo,
+    lockfile: LockfileInfo,
+    plugins: PluginsInfo,
+    issues: Vec<Issue>,
 }
 
 pub fn check_health(json: bool) -> anyhow::Result<i32> {
-    let mut results = Vec::new();
-    let mut has_errors = false;
-    let mut has_warnings = false;
+    let manifest_path = config::manifest_path();
+    let lockfile_path = config::lockfile_path();
+    let plugins_dir = config::plugins_dir();
 
-    if !json {
-        println!("Checking plugin manager health...\n");
-    }
+    // Check manifest
+    let (manifest_info, mut issues) = check_manifest(&manifest_path);
 
-    // Check configuration files
-    if !json {
-        println!("Configuration Files:");
-    }
-    match check_manifest() {
-        Ok(msg) => {
-            if !json {
-                println!("  ✅ {}: {}", crate::constants::MANIFEST_FILE, msg);
-            }
-            results.push(CheckResult {
-                name: crate::constants::MANIFEST_FILE.to_string(),
-                status: CheckStatus::Ok,
-                message: msg,
-            });
-        }
-        Err(e) => {
-            if !json {
-                println!("  ❌ {}: {}", crate::constants::MANIFEST_FILE, e);
-            }
-            results.push(CheckResult {
-                name: crate::constants::MANIFEST_FILE.to_string(),
-                status: CheckStatus::Error,
-                message: e.to_string(),
-            });
-            has_errors = true;
-        }
-    }
+    // Check lockfile (independent check)
+    let (lockfile_info, lockfile_opt, lockfile_issues) = check_lockfile(&lockfile_path);
+    issues.extend(lockfile_issues);
 
-    match check_lockfile() {
-        Ok((lockfile, msg)) => {
-            if !json {
-                println!("  ✅ {}: {}", crate::constants::LOCKFILE_FILE, msg);
-            }
-            results.push(CheckResult {
-                name: crate::constants::LOCKFILE_FILE.to_string(),
-                status: CheckStatus::Ok,
-                message: msg,
-            });
+    // Check plugins (only if lockfile is valid)
+    let (plugins_info, plugins_issues) = if let Some(ref lockfile) = lockfile_opt {
+        check_plugins(&plugins_dir, lockfile)
+    } else {
+        // If lockfile is invalid, we can still check if the directory exists
+        let dir_present = Path::new(&plugins_dir).exists();
+        (
+            PluginsInfo {
+                directory_present: dir_present,
+                installed: 0,
+                expected: 0,
+                missing: Vec::new(),
+                hash_mismatch: Vec::new(),
+                unmanaged: Vec::new(),
+            },
+            Vec::new(), // Don't add extra issues - lockfile issues already cover this
+        )
+    };
+    issues.extend(plugins_issues);
 
-            // Check plugin files
-            if !json {
-                println!("\nPlugin Files:");
-            }
-            let (plugin_results, plugin_errors, plugin_warnings) =
-                check_plugin_files(&lockfile, json);
-            results.extend(plugin_results);
-            if plugin_errors {
-                has_errors = true;
-            }
-            if plugin_warnings {
-                has_warnings = true;
-            }
+    // Sort issues deterministically by code, then message
+    issues.sort_by(|a, b| a.code.cmp(&b.code).then_with(|| a.message.cmp(&b.message)));
 
-            // Check unmanaged files
-            if !json {
-                println!("\nUnmanaged Files:");
-            }
-            let (unmanaged_results, unmanaged_warnings) = check_unmanaged_files(&lockfile, json);
-            results.extend(unmanaged_results);
-            if unmanaged_warnings {
-                has_warnings = true;
-            }
-        }
-        Err(e) => {
-            if !json {
-                println!("  ❌ {}: {}", crate::constants::LOCKFILE_FILE, e);
-            }
-            results.push(CheckResult {
-                name: crate::constants::LOCKFILE_FILE.to_string(),
-                status: CheckStatus::Error,
-                message: e.to_string(),
-            });
-            has_errors = true;
-        }
-    }
+    // Determine overall status and exit code
+    let has_errors = issues.iter().any(|i| i.severity == "error");
+    let has_warnings = issues.iter().any(|i| i.severity == "warning");
 
-    // Summary
-    let ok_count = results
-        .iter()
-        .filter(|r| matches!(r.status, CheckStatus::Ok))
-        .count();
-    let warning_count = results
-        .iter()
-        .filter(|r| matches!(r.status, CheckStatus::Warning))
-        .count();
-    let error_count = results
-        .iter()
-        .filter(|r| matches!(r.status, CheckStatus::Error))
-        .count();
+    let (status, exit_code) = if has_errors {
+        ("error".to_string(), 2)
+    } else if has_warnings {
+        ("warning".to_string(), 1)
+    } else {
+        ("ok".to_string(), 0)
+    };
+
+    let output = DoctorOutput {
+        schema_version: constants::SCHEMA_VERSION,
+        status: status.clone(),
+        exit_code,
+        manifest: manifest_info,
+        lockfile: lockfile_info,
+        plugins: plugins_info,
+        issues,
+    };
 
     if json {
         // Output JSON
-        let status = if has_errors {
-            "failure"
-        } else if has_warnings {
-            "drift"
-        } else {
-            "healthy"
-        };
-
-        let output = DoctorOutput {
-            schema_version: constants::SCHEMA_VERSION,
-            status: status.to_string(),
-            summary: Summary {
-                ok: ok_count,
-                warnings: warning_count,
-                errors: error_count,
-            },
-            checks: results,
-        };
-
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         // Output human-readable format
-        println!("\nSummary:");
-        println!("  ✅ {} check(s) passed", ok_count);
-        if warning_count > 0 {
-            println!("  ⚠️  {} warning(s)", warning_count);
-        }
-        if error_count > 0 {
-            println!("  ❌ {} error(s)", error_count);
-        }
+        output_human_readable(&output);
     }
 
-    // Deterministic exit codes:
-    // 0 = healthy (no errors, no warnings)
-    // 1 = drift (warnings present)
-    // 2 = failure (errors present)
-    if has_errors {
-        Ok(2)
-    } else if has_warnings {
-        Ok(1)
+    Ok(exit_code)
+}
+
+fn check_manifest(path: &str) -> (ManifestInfo, Vec<Issue>) {
+    let mut issues = Vec::new();
+
+    let present = Path::new(path).exists();
+    let mut valid = false;
+
+    if !present {
+        issues.push(Issue {
+            severity: "error".to_string(),
+            code: "MANIFEST_MISSING".to_string(),
+            message: "Manifest file not found".to_string(),
+            path: Some(path.to_string()),
+        });
     } else {
-        Ok(0)
-    }
-}
-
-fn check_manifest() -> anyhow::Result<String> {
-    let path = config::manifest_path();
-    if !Path::new(&path).exists() {
-        anyhow::bail!("File not found");
-    }
-
-    Manifest::load()?;
-    Ok("File exists and parses correctly".to_string())
-}
-
-fn check_lockfile() -> anyhow::Result<(Lockfile, String)> {
-    let path = config::lockfile_path();
-    if !Path::new(&path).exists() {
-        anyhow::bail!("File not found");
-    }
-
-    let lockfile = Lockfile::load()?;
-    let plugin_count = lockfile.plugin.len();
-    Ok((
-        lockfile,
-        format!(
-            "File exists and parses correctly ({} plugin(s))",
-            plugin_count
-        ),
-    ))
-}
-
-fn check_plugin_files(lockfile: &Lockfile, json: bool) -> (Vec<CheckResult>, bool, bool) {
-    let mut results = Vec::new();
-    let mut has_errors = false;
-    let has_warnings = false;
-    let plugins_dir = config::plugins_dir();
-
-    for plugin in &lockfile.plugin {
-        let file_path = Path::new(&plugins_dir).join(&plugin.file);
-        let mut checks_passed = 0;
-        let mut checks_total = 0;
-
-        // Check file exists
-        checks_total += 1;
-        if file_path.exists() {
-            checks_passed += 1;
-        } else {
-            if !json {
-                println!("  ❌ {}: File not found ({})", plugin.name, plugin.file);
+        match Manifest::load() {
+            Ok(_) => {
+                valid = true;
             }
-            results.push(CheckResult {
-                name: format!("plugin:{}", plugin.name),
-                status: CheckStatus::Error,
-                message: format!("File '{}' not found", plugin.file),
-            });
-            has_errors = true;
-            continue;
-        }
-
-        // Check filename matches
-        checks_total += 1;
-        if file_path.file_name().and_then(|n| n.to_str()) == Some(&plugin.file) {
-            checks_passed += 1;
-        } else {
-            if !json {
-                println!(
-                    "  ❌ {}: Filename mismatch (expected: {})",
-                    plugin.name, plugin.file
-                );
-            }
-            results.push(CheckResult {
-                name: format!("plugin:{}", plugin.name),
-                status: CheckStatus::Error,
-                message: format!("Filename mismatch: expected '{}'", plugin.file),
-            });
-            has_errors = true;
-            continue;
-        }
-
-        // Check hash
-        checks_total += 1;
-        match plugin.parse_hash() {
-            Ok((algorithm, _)) => match verify_plugin_hash(&file_path, algorithm) {
-                Ok(computed_hash) => {
-                    if computed_hash == plugin.hash {
-                        checks_passed += 1;
-                    } else {
-                        if !json {
-                            println!("  ❌ {}: Hash mismatch", plugin.name);
-                        }
-                        results.push(CheckResult {
-                            name: format!("plugin:{}", plugin.name),
-                            status: CheckStatus::Error,
-                            message: format!("Hash mismatch for '{}'", plugin.file),
-                        });
-                        has_errors = true;
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    if !json {
-                        println!("  ❌ {}: Failed to compute hash: {}", plugin.name, e);
-                    }
-                    results.push(CheckResult {
-                        name: format!("plugin:{}", plugin.name),
-                        status: CheckStatus::Error,
-                        message: format!("Failed to compute hash: {}", e),
-                    });
-                    has_errors = true;
-                    continue;
-                }
-            },
             Err(e) => {
-                if !json {
-                    println!("  ❌ {}: Failed to parse hash: {}", plugin.name, e);
-                }
-                results.push(CheckResult {
-                    name: format!("plugin:{}", plugin.name),
-                    status: CheckStatus::Error,
-                    message: format!("Failed to parse hash: {}", e),
+                issues.push(Issue {
+                    severity: "error".to_string(),
+                    code: "MANIFEST_INVALID".to_string(),
+                    message: format!("Manifest file is invalid: {}", e),
+                    path: Some(path.to_string()),
                 });
-                has_errors = true;
+            }
+        }
+    }
+
+    (
+        ManifestInfo {
+            present,
+            valid,
+            path: path.to_string(),
+        },
+        issues,
+    )
+}
+
+fn check_lockfile(path: &str) -> (LockfileInfo, Option<Lockfile>, Vec<Issue>) {
+    let mut issues = Vec::new();
+
+    let present = Path::new(path).exists();
+    let mut valid = false;
+    let mut lockfile_opt = None;
+
+    if !present {
+        issues.push(Issue {
+            severity: "error".to_string(),
+            code: "LOCKFILE_MISSING".to_string(),
+            message: "Lockfile not found".to_string(),
+            path: Some(path.to_string()),
+        });
+    } else {
+        match Lockfile::load() {
+            Ok(lockfile) => {
+                valid = true;
+                lockfile_opt = Some(lockfile);
+            }
+            Err(e) => {
+                issues.push(Issue {
+                    severity: "error".to_string(),
+                    code: "LOCKFILE_INVALID".to_string(),
+                    message: format!("Lockfile is invalid: {}", e),
+                    path: Some(path.to_string()),
+                });
+            }
+        }
+    }
+
+    (
+        LockfileInfo {
+            present,
+            valid,
+            path: path.to_string(),
+        },
+        lockfile_opt,
+        issues,
+    )
+}
+
+fn check_plugins(plugins_dir: &str, lockfile: &Lockfile) -> (PluginsInfo, Vec<Issue>) {
+    let mut issues = Vec::new();
+    let plugins_path = Path::new(plugins_dir);
+    let directory_present = plugins_path.exists();
+
+    let expected = lockfile.plugin.len();
+    let mut installed = 0;
+    let mut missing = Vec::new();
+    let mut hash_mismatch = Vec::new();
+    let mut unmanaged = Vec::new();
+
+    if !directory_present {
+        issues.push(Issue {
+            severity: "error".to_string(),
+            code: "PLUGINS_DIR_MISSING".to_string(),
+            message: "Plugins directory not found".to_string(),
+            path: Some(plugins_dir.to_string()),
+        });
+    } else {
+        // Get list of managed filenames
+        let managed_files: std::collections::HashSet<String> =
+            lockfile.plugin.iter().map(|p| p.file.clone()).collect();
+
+        // Check each plugin in lockfile
+        for plugin in &lockfile.plugin {
+            let file_path = plugins_path.join(&plugin.file);
+
+            if !file_path.exists() {
+                missing.push(plugin.name.clone());
+                issues.push(Issue {
+                    severity: "error".to_string(),
+                    code: "PLUGIN_MISSING".to_string(),
+                    message: format!("Plugin '{}' file '{}' not found", plugin.name, plugin.file),
+                    path: Some(file_path.to_string_lossy().to_string()),
+                });
                 continue;
             }
-        }
 
-        // All checks passed
-        if checks_passed == checks_total {
-            if !json {
-                println!(
-                    "  ✅ {}: File exists, filename matches, hash verified",
-                    plugin.name
-                );
-            }
-            results.push(CheckResult {
-                name: format!("plugin:{}", plugin.name),
-                status: CheckStatus::Ok,
-                message: format!("All checks passed for '{}'", plugin.file),
-            });
-        }
-    }
-
-    (results, has_errors, has_warnings)
-}
-
-fn check_unmanaged_files(lockfile: &Lockfile, json: bool) -> (Vec<CheckResult>, bool) {
-    let mut results = Vec::new();
-    let mut has_warnings = false;
-    let plugins_dir = config::plugins_dir();
-    let plugins_path = Path::new(&plugins_dir);
-
-    if !plugins_path.exists() {
-        return (results, false);
-    }
-
-    // Get list of managed filenames
-    let managed_files: std::collections::HashSet<String> =
-        lockfile.plugin.iter().map(|p| p.file.clone()).collect();
-
-    // Check for unmanaged .jar files
-    if let Ok(entries) = fs::read_dir(plugins_path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                        if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                            if !json {
-                                println!("  ⚠️  Unmanaged file: {}", filename);
-                            }
-                            results.push(CheckResult {
-                                name: format!("unmanaged:{}", filename),
-                                status: CheckStatus::Warning,
-                                message: format!("Unmanaged .jar file: '{}'", filename),
+            // Check hash
+            match plugin.parse_hash() {
+                Ok((algorithm, _)) => match verify_plugin_hash(&file_path, algorithm) {
+                    Ok(computed_hash) => {
+                        if computed_hash == plugin.hash {
+                            installed += 1;
+                        } else {
+                            hash_mismatch.push(plugin.name.clone());
+                            issues.push(Issue {
+                                severity: "error".to_string(),
+                                code: "HASH_MISMATCH".to_string(),
+                                message: format!("Plugin '{}' hash mismatch", plugin.name),
+                                path: Some(file_path.to_string_lossy().to_string()),
                             });
-                            has_warnings = true;
+                        }
+                    }
+                    Err(e) => {
+                        hash_mismatch.push(plugin.name.clone());
+                        issues.push(Issue {
+                            severity: "error".to_string(),
+                            code: "HASH_MISMATCH".to_string(),
+                            message: format!(
+                                "Plugin '{}' hash verification failed: {}",
+                                plugin.name, e
+                            ),
+                            path: Some(file_path.to_string_lossy().to_string()),
+                        });
+                    }
+                },
+                Err(e) => {
+                    hash_mismatch.push(plugin.name.clone());
+                    issues.push(Issue {
+                        severity: "error".to_string(),
+                        code: "HASH_MISMATCH".to_string(),
+                        message: format!("Plugin '{}' hash parsing failed: {}", plugin.name, e),
+                        path: Some(file_path.to_string_lossy().to_string()),
+                    });
+                }
+            }
+        }
+
+        // Check for unmanaged files (sorted for determinism)
+        if let Ok(entries) = fs::read_dir(plugins_path) {
+            let mut unmanaged_files: Vec<String> = Vec::new();
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                            if filename.ends_with(".jar") && !managed_files.contains(filename) {
+                                unmanaged_files.push(filename.to_string());
+                            }
                         }
                     }
                 }
             }
+            unmanaged_files.sort(); // Deterministic order
+
+            for filename in &unmanaged_files {
+                unmanaged.push(filename.clone());
+                issues.push(Issue {
+                    severity: "warning".to_string(),
+                    code: "UNMANAGED_PLUGIN".to_string(),
+                    message: format!("Unmanaged plugin file '{}'", filename),
+                    path: Some(plugins_path.join(filename).to_string_lossy().to_string()),
+                });
+            }
         }
     }
 
-    if !has_warnings && !json {
-        println!("  ✅ No unmanaged .jar files found");
+    (
+        PluginsInfo {
+            directory_present,
+            installed,
+            expected,
+            missing,
+            hash_mismatch,
+            unmanaged,
+        },
+        issues,
+    )
+}
+
+fn output_human_readable(output: &DoctorOutput) {
+    // 1. Manifest section
+    println!("Manifest (plugins.toml)");
+    if output.manifest.present && output.manifest.valid {
+        println!("  ✓ Present and valid");
+    } else if output.manifest.present {
+        println!("  ✗ Present but invalid");
+    } else {
+        println!("  ✗ Not found");
     }
 
-    (results, has_warnings)
+    // 2. Lockfile section
+    println!("\nLockfile (plugins.lock)");
+    if output.lockfile.present && output.lockfile.valid {
+        println!("  ✓ Present and valid");
+    } else if output.lockfile.present {
+        println!("  ✗ Present but invalid");
+    } else {
+        println!("  ✗ Not found");
+    }
+
+    // 3. Plugins directory section
+    let plugins_dir_path = config::plugins_dir();
+    println!("\nPlugins directory ({})", plugins_dir_path);
+    if output.plugins.directory_present {
+        println!("  ✓ Directory exists");
+        println!(
+            "  Installed: {} / Expected: {}",
+            output.plugins.installed, output.plugins.expected
+        );
+
+        if !output.plugins.missing.is_empty() {
+            for plugin_name in &output.plugins.missing {
+                println!("  ✗ Missing: {}", plugin_name);
+            }
+        }
+        if !output.plugins.hash_mismatch.is_empty() {
+            for plugin_name in &output.plugins.hash_mismatch {
+                println!("  ✗ Hash mismatch: {}", plugin_name);
+            }
+        }
+        if !output.plugins.unmanaged.is_empty() {
+            for filename in &output.plugins.unmanaged {
+                println!("  ⚠ Unmanaged: {}", filename);
+            }
+        }
+    } else {
+        println!("  ✗ Directory not found");
+    }
+
+    // 4. Summary
+    println!("\nSummary");
+    let error_count = output
+        .issues
+        .iter()
+        .filter(|i| i.severity == "error")
+        .count();
+    let warning_count = output
+        .issues
+        .iter()
+        .filter(|i| i.severity == "warning")
+        .count();
+
+    if error_count > 0 {
+        println!("  ✗ {} error(s)", error_count);
+    }
+    if warning_count > 0 {
+        println!("  ⚠ {} warning(s)", warning_count);
+    }
+    if error_count == 0 && warning_count == 0 {
+        println!("  ✓ No issues");
+    }
+
+    // Status line
+    let status_label = match output.status.as_str() {
+        "error" => "errors",
+        "warning" => "warnings",
+        _ => "healthy",
+    };
+    println!("\nStatus: {}", status_label);
 }

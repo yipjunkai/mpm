@@ -546,7 +546,7 @@ fn test_doctor_passes_with_synced_plugins() {
         output
     );
     assert!(
-        output.contains("✅") && output.contains("check(s) passed"),
+        output.contains("Status: healthy") || output.contains("✓"),
         "Expected success markers in output: {}",
         output
     );
@@ -570,7 +570,7 @@ fn test_doctor_detects_missing_files() {
         output
     );
     assert!(
-        output.contains("File not found") || output.contains("❌"),
+        output.contains("Missing") || output.contains("✗"),
         "Expected error about missing file in output: {}",
         output
     );
@@ -605,7 +605,7 @@ fn test_doctor_detects_hash_mismatch() {
         output
     );
     assert!(
-        output.contains("Hash mismatch") || output.contains("❌"),
+        output.contains("Hash mismatch") || output.contains("✗"),
         "Expected hash mismatch error in output: {}",
         output
     );
@@ -634,7 +634,7 @@ fn test_doctor_detects_unmanaged_files() {
         output
     );
     assert!(
-        output.contains("Unmanaged file") || output.contains("⚠️"),
+        output.contains("Unmanaged") || output.contains("⚠"),
         "Expected warning about unmanaged file in output: {}",
         output
     );
@@ -670,9 +670,7 @@ fn test_doctor_detects_wrong_filename() {
         output
     );
     assert!(
-        output.contains("not found")
-            || output.contains("Filename mismatch")
-            || output.contains("❌"),
+        output.contains("Missing") || output.contains("✗") || output.contains("Unmanaged"),
         "Expected error about filename in output: {}",
         output
     );
@@ -693,7 +691,7 @@ fn test_doctor_passes_after_sync() {
 
     assert!(success, "Doctor should pass after sync. output: {}", output);
     assert!(
-        output.contains("✅") && !output.contains("❌"),
+        output.contains("Status: healthy"),
         "Expected all checks to pass in output: {}",
         output
     );
@@ -722,8 +720,13 @@ fn test_doctor_json_output_healthy() {
 
     let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
     assert_eq!(json["schema_version"], 1);
-    assert_eq!(json["status"], "healthy");
-    assert!(json["summary"]["ok"].as_u64().unwrap() > 0);
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["exit_code"], 0);
+    assert!(json["manifest"]["present"].as_bool().unwrap());
+    assert!(json["manifest"]["valid"].as_bool().unwrap());
+    assert!(json["lockfile"]["present"].as_bool().unwrap());
+    assert!(json["lockfile"]["valid"].as_bool().unwrap());
+    assert!(json["plugins"]["installed"].as_u64().unwrap() > 0);
 }
 
 #[test]
@@ -756,8 +759,9 @@ fn test_doctor_json_output_drift() {
 
     let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
     assert_eq!(json["schema_version"], 1);
-    assert_eq!(json["status"], "drift");
-    assert!(json["summary"]["warnings"].as_u64().unwrap() > 0);
+    assert_eq!(json["status"], "warning");
+    assert_eq!(json["exit_code"], 1);
+    assert!(json["issues"].as_array().unwrap().iter().any(|i| i["severity"] == "warning"));
 }
 
 #[test]
@@ -786,8 +790,9 @@ fn test_doctor_json_output_failure() {
 
     let json: serde_json::Value = serde_json::from_str(json_str).expect("Should be valid JSON");
     assert_eq!(json["schema_version"], 1);
-    assert_eq!(json["status"], "failure");
-    assert!(json["summary"]["errors"].as_u64().unwrap() > 0);
+    assert_eq!(json["status"], "error");
+    assert_eq!(json["exit_code"], 2);
+    assert!(json["issues"].as_array().unwrap().iter().any(|i| i["severity"] == "error"));
 }
 
 #[test]
