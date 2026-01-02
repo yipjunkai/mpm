@@ -8,6 +8,7 @@ use clap::Parser;
 use cli::Cli;
 
 use manifest::{Manifest, Minecraft};
+use sources::modrinth;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,6 +28,11 @@ async fn main() -> anyhow::Result<()> {
 
             let loaded_manifest = Manifest::load()?;
             println!("Loaded plugins.toml: {:?}", loaded_manifest);
+
+            // Test Modrinth API
+            println!("\nTesting Modrinth API...");
+            let project = modrinth::get_project("fabric-api").await?;
+            println!("Fetched project: {project:?}");
         }
         _ => {}
     }
