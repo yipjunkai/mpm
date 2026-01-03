@@ -5,12 +5,15 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct Project {
     pub id: String,
+    #[allow(dead_code)] // Required for deserialization but not used
     pub slug: String,
+    #[allow(dead_code)] // Required for deserialization but not used
     pub title: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Version {
+    #[allow(dead_code)] // Required for deserialization but not used
     pub id: String,
     pub version_number: String,
     pub date_published: String,
