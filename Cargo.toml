@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A fast, deterministic plugin manager for Minecraft servers. Built in Rust for reproducible, lockfile-verified installations."
 readme = "README.md"
+publish = false
 
 [dependencies]
 anyhow = "1.0.100"
