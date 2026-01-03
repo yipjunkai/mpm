@@ -1,0 +1,50 @@
+name: Verify Code
+
+on:
+  pull_request:
+    branches: ["*"]
+  push:
+    branches:
+      - master
+
+# Cancel in-progress runs when a new commit is pushed (only for pull_request events)
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Secret Scanning
+  secret-scanning:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified,unknown
+
+  # Linter and Formatter
+  lint-and-format:
+    name: Linter and Formatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - name: Run Clippy
+        run: cargo clippy -- -D warnings
