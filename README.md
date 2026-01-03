@@ -1,22 +1,32 @@
 # mpm - Minecraft Plugin Manager
 
-A deterministic plugin manager for Minecraft servers that ensures reproducible plugin installations through lockfiles and hash verification.
+mpm is a native Rust-based CLI for Minecraft servers. It brings modern DevOps practices to plugin management, using declarative manifests and lockfiles to ensure every installation is deterministic, verified, and reproducible.
 
 ## Features
 
-- **Deterministic installations**: Lockfile-based version pinning ensures reproducible plugin setups
-- **Hash verification**: All plugins are verified against SHA-256/SHA-512 hashes for security
-- **Modrinth integration**: Seamlessly add plugins from Modrinth
-- **Automatic lockfile generation**: Lockfile is automatically updated when adding or removing plugins
-- **Health checks**: Built-in `doctor` command to verify plugin integrity
-- **CI/CD friendly**: JSON output format for automated health checks
+### 📦 Modern Package Management
+
+- **Manifest-Driven:** Define your environment in `plugins.toml` and eliminate manual `.jar` hunting.
+- **Reproducible Installs:** A `plugins.lock` ensures every setup is bit-for-bit identical across all environments.
+- **Multi-Source:** Native integration with **Hangar**, **Modrinth**, and **GitHub** APIs.
+
+### 🛡️ Safety & Reliability
+
+- **Integrity Verification:** Automated hash checking for every download to prevent corruption or tampering.
+- **Atomic Sync:** Downloads and verifies the entire environment before updating your live folder to prevent broken states.
+
+## 🚀 Coming Soon
+
+- [ ] **Hosting Panel Integration:** Native support for Pterodactyl and WINGS for seamless, one-click managed deployments.
+- [ ] **Expanded Sources:** Support for custom repositories, private mirrors, and direct Jenkins/CI build artifacts.
+- [ ] **Intelligent Dependency Resolution:** Automated discovery and version-matching for required library plugins and APIs.
 
 ## Installation
 
 ### Building from Source
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/yipjunkai/mpm.git
 cd mpm
 cargo build --release
 ```
@@ -102,6 +112,7 @@ Add a plugin to the manifest. Automatically updates the lockfile.
   - `github:PaperMC/Paper@1.20.1` - Add from GitHub Releases
 
 **Supported sources:**
+
 - `modrinth` - Modrinth plugin repository (default)
 - `hangar` - Hangar (PaperMC plugin repository), format: `author/slug`
 - `github` - GitHub Releases, format: `owner/repo`
@@ -281,8 +292,11 @@ cargo run -- <command>
 
 ## License
 
-[Add your license here]
+mpm is licensed under either of
 
-## Contributing
+- [MIT License](LICENSE-MIT)
+- [Apache License 2.0](LICENSE-APACHE)
 
-[Add contributing guidelines here]
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in **mpm** by you, as defined in the Apache-2.0 license, shall be dually licensed as above, without any additional terms or conditions.
