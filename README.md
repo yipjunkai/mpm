@@ -8,15 +8,16 @@ mpm is a native Rust-based CLI for Minecraft servers. It brings modern DevOps pr
 
 - **Manifest-Driven:** Define your environment in `plugins.toml` and eliminate manual `.jar` hunting.
 - **Reproducible Installs:** A `plugins.lock` ensures every setup is bit-for-bit identical across all environments.
-- **Multi-Source:** Native integration with **Hangar**, **Modrinth**, and **GitHub** APIs.
+- **Multi-Source:** Native integration with **Modrinth**, **Hangar**, and **GitHub Releases** APIs. SpigotMC support coming soon.
 
 ### 🛡️ Safety & Reliability
 
 - **Integrity Verification:** Automated hash checking for every download to prevent corruption or tampering.
 - **Atomic Sync:** Downloads and verifies the entire environment before updating your live folder to prevent broken states.
 
-## 🚀 Coming Soon
+## 🚀 Coming Soon (In no particular order)
 
+- [ ] **SpigotMC Integration:** Support for downloading plugins from SpigotMC's plugin repository.
 - [ ] **Hosting Panel Integration:** Native support for Pterodactyl and WINGS for seamless, one-click managed deployments.
 - [ ] **Expanded Sources:** Support for custom repositories, private mirrors, and direct Jenkins/CI build artifacts.
 - [ ] **Intelligent Dependency Resolution:** Automated discovery and version-matching for required library plugins and APIs.
@@ -113,9 +114,12 @@ Add a plugin to the manifest. Automatically updates the lockfile.
 
 **Supported sources:**
 
-- `modrinth` - Modrinth plugin repository (default)
-- `hangar` - Hangar (PaperMC plugin repository), format: `author/slug`
-- `github` - GitHub Releases, format: `owner/repo`
+| Source     | Description                          | Format                                    | Status         |
+| ---------- | ------------------------------------ | ----------------------------------------- | -------------- |
+| `modrinth` | Modrinth plugin repository (default) | `plugin-id` or `plugin-id@version`        | ✅ Available   |
+| `hangar`   | Hangar (PaperMC plugin repository)   | `author/slug` or `author/slug@version`    | ✅ Available   |
+| `github`   | GitHub Releases                      | `owner/repo` or `owner/repo@tag`          | ✅ Available   |
+| `spigotmc` | SpigotMC plugin repository           | `resource-id` or `resource-id@version-id` | 🚧 In Progress |
 
 #### `mpm remove <name>`
 
