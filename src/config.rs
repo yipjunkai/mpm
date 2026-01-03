@@ -7,7 +7,8 @@ pub fn config_dir() -> String {
 }
 
 pub fn plugins_dir() -> String {
-    format!("{}/{}", config_dir(), constants::PLUGINS_DIR)
+    std::env::var("PM_PLUGINS_DIR")
+        .unwrap_or_else(|_| format!("{}/{}", config_dir(), constants::PLUGINS_DIR))
 }
 
 pub fn manifest_path() -> String {
