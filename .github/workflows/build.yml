@@ -1,12 +1,12 @@
 name: Build and Release
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag to attach binaries to"
-        required: false
+      commit_sha:
         type: string
+        description: "Commit SHA to deploy (defaults to current branch HEAD)"
+        required: false
 
 jobs:
   build:
@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -77,7 +79,7 @@ jobs:
           echo "Binary: ${{ matrix.binary_name }}" > README.txt
           echo "Target: ${{ matrix.target }}" >> README.txt
           echo "Version: ${{ steps.cargo_version.outputs.version }}" >> README.txt
-          echo "Commit: ${{ github.sha }}" >> README.txt
+          echo "Commit: ${{ github.event.inputs.commit_sha || github.sha }}" >> README.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -111,20 +113,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            # Get the latest release tag using GitHub API
-            RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/latest")
-            TAG=$(echo "$RESPONSE" | jq -r '.tag_name // empty')
+          # Get the latest release tag using GitHub API
+          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          TAG=$(echo "$RESPONSE" | jq -r '.tag_name // empty')
 
-            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-              echo "No release found. Please create a release first or provide a tag via workflow inputs."
-              exit 1
-            fi
-            echo "Using latest release tag: $TAG"
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No release found. Please create a release first."
+            exit 1
           fi
+          echo "Using latest release tag: $TAG"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Create release archives
