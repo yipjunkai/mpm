@@ -1,0 +1,23 @@
+# User-specific settings (personal preferences)
+settings.json
+
+# User-specific keybindings
+keybindings.json
+
+# User-specific snippets
+*.code-snippets
+
+# User-specific workspace storage
+*.code-workspace
+
+# User-specific state
+state.vscdb
+state.vscdb.backup
+
+# User-specific extensions (if you want to share extensions, remove this line)
+extensions.json
+
+# Note: This allows shared configurations like:
+# - tasks.json (build tasks)
+# - launch.json (debug configurations)
+# - extensions.json (if you uncomment the line above, it will be tracked)
