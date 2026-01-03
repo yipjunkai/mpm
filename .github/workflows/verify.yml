@@ -2,10 +2,14 @@ name: Verify Code
 
 on:
   pull_request:
-    branches: ["*"]
   push:
     branches:
       - master
+    paths-ignore:
+      - .github/**
+      - .cursor/**
+      - .vscode/**
+      - .gitignore
 
 # Cancel in-progress runs when a new commit is pushed (only for pull_request events)
 concurrency:
