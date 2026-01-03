@@ -1,5 +1,7 @@
 // Modrinth source implementation
 
+use crate::sources::source_trait::{PluginSource, ResolvedVersion};
+use async_trait::async_trait;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -32,63 +34,82 @@ pub struct FileHashes {
     pub sha512: String,
 }
 
-pub async fn get_project(slug: &str) -> anyhow::Result<Project> {
+async fn get_plugin(slug: &str) -> anyhow::Result<Project> {
     let url = format!("https://api.modrinth.com/v2/project/{}", slug);
-    let project = reqwest::get(url).await?.json().await?;
-    Ok(project)
+    let plugin = reqwest::get(url).await?.json().await?;
+    Ok(plugin)
 }
 
-pub async fn get_versions(project_id: &str) -> anyhow::Result<Vec<Version>> {
-    let url = format!("https://api.modrinth.com/v2/project/{}/version", project_id);
+async fn get_versions(plugin_id: &str) -> anyhow::Result<Vec<Version>> {
+    let url = format!("https://api.modrinth.com/v2/project/{}/version", plugin_id);
     let versions: Vec<Version> = reqwest::get(url).await?.json().await?;
     Ok(versions)
 }
 
-pub async fn resolve_version(
-    project_id: &str,
-    requested_version: Option<&str>,
-) -> anyhow::Result<(String, String, String, String)> {
-    // First get the project to get the ID
-    let project = get_project(project_id).await?;
+pub struct ModrinthSource;
 
-    // Get all versions
-    let mut versions = get_versions(&project.id).await?;
+#[async_trait]
+impl PluginSource for ModrinthSource {
+    fn name(&self) -> &'static str {
+        "modrinth"
+    }
 
-    let version = if let Some(version_str) = requested_version {
-        // Find the specific version
-        versions
-            .iter()
-            .find(|v| v.version_number == version_str)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Version '{}' not found for project '{}'",
-                    version_str,
-                    project_id
-                )
-            })?
-    } else {
-        // Get the latest version - sort by date_published descending to ensure determinism
-        versions.sort_by(|a, b| {
-            // Sort by date_published descending (newest first)
-            b.date_published.cmp(&a.date_published)
-        });
-        versions
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("No versions found for project '{}'", project_id))?
-    };
+    fn validate_plugin_id(&self, plugin_id: &str) -> anyhow::Result<()> {
+        // Modrinth accepts slugs/IDs (alphanumeric, dashes, underscores)
+        if plugin_id.is_empty() {
+            anyhow::bail!("Modrinth plugin ID cannot be empty");
+        }
+        Ok(())
+    }
 
-    // Get the primary file (usually the first one, or the one marked as primary)
-    let file = version.files.first().ok_or_else(|| {
-        anyhow::anyhow!("No files found for version '{}'", version.version_number)
-    })?;
+    async fn resolve_version(
+        &self,
+        plugin_id: &str,
+        requested_version: Option<&str>,
+        _minecraft_version: Option<&str>,
+    ) -> anyhow::Result<ResolvedVersion> {
+        // First get the plugin to get the ID
+        let plugin = get_plugin(plugin_id).await?;
 
-    // Use sha512 from Modrinth API and format as UV-style hash (algorithm:hash)
-    let hash = format!("sha512:{}", file.hashes.sha512);
+        // Get all versions
+        let mut versions = get_versions(&plugin.id).await?;
 
-    Ok((
-        version.version_number.clone(),
-        file.filename.clone(),
-        file.url.clone(),
-        hash,
-    ))
+        let version = if let Some(version_str) = requested_version {
+            // Find the specific version
+            versions
+                .iter()
+                .find(|v| v.version_number == version_str)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Version '{}' not found for plugin '{}'",
+                        version_str,
+                        plugin_id
+                    )
+                })?
+        } else {
+            // Get the latest version - sort by date_published descending to ensure determinism
+            versions.sort_by(|a, b| {
+                // Sort by date_published descending (newest first)
+                b.date_published.cmp(&a.date_published)
+            });
+            versions
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("No versions found for plugin '{}'", plugin_id))?
+        };
+
+        // Get the primary file (usually the first one, or the one marked as primary)
+        let file = version.files.first().ok_or_else(|| {
+            anyhow::anyhow!("No files found for version '{}'", version.version_number)
+        })?;
+
+        // Use sha512 from Modrinth API and format as UV-style hash (algorithm:hash)
+        let hash = format!("sha512:{}", file.hashes.sha512);
+
+        Ok(ResolvedVersion {
+            version: version.version_number.clone(),
+            filename: file.filename.clone(),
+            url: file.url.clone(),
+            hash,
+        })
+    }
 }

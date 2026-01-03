@@ -1,5 +1,7 @@
 // Hangar source implementation (PaperMC plugin repository)
 
+use crate::sources::source_trait::{PluginSource, ResolvedVersion};
+use async_trait::async_trait;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -56,84 +58,107 @@ struct FileInfo {
     sha256_hash: String,
 }
 
-pub async fn resolve_version(
-    project_id: &str,
-    requested_version: Option<&str>,
-) -> anyhow::Result<(String, String, String, String)> {
-    // Parse project_id as author/slug
-    let parts: Vec<&str> = project_id.split('/').collect();
-    if parts.len() != 2 {
-        anyhow::bail!(
-            "Invalid Hangar project ID format. Expected 'author/slug', got '{}'",
-            project_id
-        );
+pub struct HangarSource;
+
+#[async_trait]
+impl PluginSource for HangarSource {
+    fn name(&self) -> &'static str {
+        "hangar"
     }
-    let author = parts[0];
-    let slug = parts[1];
 
-    // Get project info to verify it exists
-    let project_url = format!(
-        "https://hangar.papermc.io/api/v1/projects/{}/{}",
-        author, slug
-    );
-    let _project: Project = reqwest::get(&project_url)
-        .await?
-        .json()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar project: {}", e))?;
+    fn validate_plugin_id(&self, plugin_id: &str) -> anyhow::Result<()> {
+        // Hangar requires author/slug format
+        let parts: Vec<&str> = plugin_id.split('/').collect();
+        if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+            anyhow::bail!(
+                "Invalid Hangar plugin ID format. Expected 'author/slug', got '{}'",
+                plugin_id
+            );
+        }
+        Ok(())
+    }
 
-    // Get all versions
-    let versions_url = format!(
-        "https://hangar.papermc.io/api/v1/projects/{}/{}/versions",
-        author, slug
-    );
-    let mut versions: Vec<Version> = reqwest::get(&versions_url)
-        .await?
-        .json()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar versions: {}", e))?;
+    async fn resolve_version(
+        &self,
+        plugin_id: &str,
+        requested_version: Option<&str>,
+        _minecraft_version: Option<&str>,
+    ) -> anyhow::Result<ResolvedVersion> {
+        // Parse plugin_id as author/slug
+        let parts: Vec<&str> = plugin_id.split('/').collect();
+        if parts.len() != 2 {
+            anyhow::bail!(
+                "Invalid Hangar plugin ID format. Expected 'author/slug', got '{}'",
+                plugin_id
+            );
+        }
+        let author = parts[0];
+        let slug = parts[1];
 
-    let version = if let Some(version_str) = requested_version {
-        // Find the specific version
-        versions
-            .iter()
-            .find(|v| v.name == version_str)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Version '{}' not found for project '{}/{}'",
-                    version_str,
-                    author,
-                    slug
-                )
+        // Get plugin info to verify it exists
+        let plugin_url = format!(
+            "https://hangar.papermc.io/api/v1/projects/{}/{}",
+            author, slug
+        );
+        let _plugin: Project = reqwest::get(&plugin_url)
+            .await?
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar plugin: {}", e))?;
+
+        // Get all versions
+        let versions_url = format!(
+            "https://hangar.papermc.io/api/v1/projects/{}/{}/versions",
+            author, slug
+        );
+        let mut versions: Vec<Version> = reqwest::get(&versions_url)
+            .await?
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar versions: {}", e))?;
+
+        let version = if let Some(version_str) = requested_version {
+            // Find the specific version
+            versions
+                .iter()
+                .find(|v| v.name == version_str)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Version '{}' not found for plugin '{}/{}'",
+                        version_str,
+                        author,
+                        slug
+                    )
+                })?
+        } else {
+            // Get the latest version - sort by created_at descending to ensure determinism
+            versions.sort_by(|a, b| {
+                // Sort by created_at descending (newest first)
+                b.created_at.cmp(&a.created_at)
+            });
+            versions.first().ok_or_else(|| {
+                anyhow::anyhow!("No versions found for plugin '{}/{}'", author, slug)
             })?
-    } else {
-        // Get the latest version - sort by created_at descending to ensure determinism
-        versions.sort_by(|a, b| {
-            // Sort by created_at descending (newest first)
-            b.created_at.cmp(&a.created_at)
-        });
-        versions
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("No versions found for project '{}/{}'", author, slug))?
-    };
+        };
 
-    // Get the primary download (usually the first one, or the one marked as primary)
-    let download = version.downloads.first().ok_or_else(|| {
-        anyhow::anyhow!(
-            "No downloads found for version '{}' of project '{}/{}'",
-            version.name,
-            author,
-            slug
-        )
-    })?;
+        // Get the primary download (usually the first one, or the one marked as primary)
+        let download = version.downloads.first().ok_or_else(|| {
+            anyhow::anyhow!(
+                "No downloads found for version '{}' of plugin '{}/{}'",
+                version.name,
+                author,
+                slug
+            )
+        })?;
 
-    // Use SHA-256 from Hangar API and format as UV-style hash (algorithm:hash)
-    let hash = format!("sha256:{}", download.file_info.sha256_hash);
+        // Use SHA-256 from Hangar API and format as UV-style hash (algorithm:hash)
+        let hash = format!("sha256:{}", download.file_info.sha256_hash);
 
-    Ok((
-        version.name.clone(),
-        download.name.clone(),
-        download.download_url.clone(),
-        hash,
-    ))
+        Ok(ResolvedVersion {
+            version: version.name.clone(),
+            filename: download.name.clone(),
+            url: download.download_url.clone(),
+            hash,
+        })
+    }
 }

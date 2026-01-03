@@ -2,7 +2,7 @@
 
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::Manifest;
-use crate::sources::{github, hangar, modrinth};
+use crate::sources::REGISTRY;
 use toml;
 
 pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
@@ -15,36 +15,37 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
     }
 
     let mut lockfile = Lockfile::new();
+    let minecraft_version = Some(manifest.minecraft.version.as_str());
 
     // For each plugin, resolve version
     for (name, plugin_spec) in manifest.plugins.iter() {
         println!("Resolving {}...", name);
 
-        let (version, filename, url, hash) = match plugin_spec.source.as_str() {
-            "modrinth" => {
-                modrinth::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref()).await?
-            }
-            "hangar" => {
-                hangar::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref()).await?
-            }
-            "github" => {
-                github::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref()).await?
-            }
-            _ => {
-                anyhow::bail!("Unsupported source: {}", plugin_spec.source);
-            }
-        };
+        // Get the source implementation
+        let source = REGISTRY.get_or_error(&plugin_spec.source)?;
+
+        // Validate plugin ID format
+        source.validate_plugin_id(&plugin_spec.id)?;
+
+        // Resolve version using the trait
+        let resolved = source
+            .resolve_version(
+                &plugin_spec.id,
+                plugin_spec.version.as_deref(),
+                minecraft_version,
+            )
+            .await?;
 
         lockfile.add_plugin(LockedPlugin {
             name: name.clone(),
             source: plugin_spec.source.clone(),
-            version: version.clone(),
-            file: filename.clone(),
-            url: url.clone(),
-            hash: hash.clone(),
+            version: resolved.version.clone(),
+            file: resolved.filename.clone(),
+            url: resolved.url.clone(),
+            hash: resolved.hash.clone(),
         });
 
-        println!("  → {} {}", name, version);
+        println!("  → {} {}", name, resolved.version);
     }
 
     // Sort plugins by name
