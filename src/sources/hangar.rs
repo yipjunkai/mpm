@@ -1,6 +1,7 @@
 // Hangar source implementation (PaperMC plugin repository)
 
 use crate::sources::source_trait::{PluginSource, ResolvedVersion};
+use crate::sources::version_matcher;
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -22,7 +23,7 @@ struct Namespace {
     slug: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Version {
     #[allow(dead_code)] // Required for deserialization but not used
     id: i64,
@@ -30,20 +31,18 @@ struct Version {
     #[serde(rename = "createdAt")]
     created_at: String,
     #[serde(rename = "platformDependencies")]
-    #[allow(dead_code)] // Required for deserialization but not used
     platform_dependencies: Vec<PlatformDependency>,
     downloads: Vec<Download>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct PlatformDependency {
-    #[allow(dead_code)] // Required for deserialization but not used
+    #[allow(dead_code)] // Used in filtering logic via iterator
     name: String,
-    #[allow(dead_code)] // Required for deserialization but not used
     version: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Download {
     name: String,
     #[serde(rename = "fileInfo")]
@@ -52,7 +51,7 @@ struct Download {
     download_url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct FileInfo {
     #[serde(rename = "sha256Hash")]
     sha256_hash: String,
@@ -82,7 +81,7 @@ impl PluginSource for HangarSource {
         &self,
         plugin_id: &str,
         requested_version: Option<&str>,
-        _minecraft_version: Option<&str>,
+        minecraft_version: Option<&str>,
     ) -> anyhow::Result<ResolvedVersion> {
         // Parse plugin_id as author/slug
         let parts: Vec<&str> = plugin_id.split('/').collect();
@@ -111,34 +110,116 @@ impl PluginSource for HangarSource {
             "https://hangar.papermc.io/api/v1/projects/{}/{}/versions",
             author, slug
         );
-        let mut versions: Vec<Version> = reqwest::get(&versions_url)
+        let all_versions: Vec<Version> = reqwest::get(&versions_url)
             .await?
             .json()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar versions: {}", e))?;
 
-        let version = if let Some(version_str) = requested_version {
-            // Find the specific version
-            versions
+        // Filter by Minecraft version if provided
+        let mut versions = if let Some(mc_version) = minecraft_version {
+            all_versions
                 .iter()
-                .find(|v| v.name == version_str)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
+                .filter(|v| {
+                    v.platform_dependencies
+                        .iter()
+                        .any(|dep| version_matcher::matches_mc_version(&dep.version, mc_version))
+                })
+                .cloned()
+                .collect()
+        } else {
+            all_versions.clone()
+        };
+
+        let version = if let Some(version_str) = requested_version {
+            // Find the specific version in filtered results
+            let found_version = versions.iter().find(|v| v.name == version_str);
+
+            match found_version {
+                Some(v) => {
+                    // Verify compatibility if Minecraft version is specified
+                    if let Some(mc_version) = minecraft_version {
+                        let is_compatible = v.platform_dependencies.iter().any(|dep| {
+                            version_matcher::matches_mc_version(&dep.version, mc_version)
+                        });
+                        if !is_compatible {
+                            let compatible_versions: Vec<String> = v
+                                .platform_dependencies
+                                .iter()
+                                .map(|d| d.version.clone())
+                                .collect();
+                            anyhow::bail!(
+                                "Plugin '{}/{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
+                                author,
+                                slug,
+                                version_str,
+                                mc_version,
+                                compatible_versions.join(", ")
+                            );
+                        }
+                    }
+                    v
+                }
+                None => {
+                    // Check if version exists but is incompatible
+                    if let Some(mc_version) = minecraft_version {
+                        if let Some(incompatible_version) =
+                            all_versions.iter().find(|v| v.name == version_str)
+                        {
+                            let compatible_versions: Vec<String> = incompatible_version
+                                .platform_dependencies
+                                .iter()
+                                .map(|d| d.version.clone())
+                                .collect();
+                            anyhow::bail!(
+                                "Plugin '{}/{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
+                                author,
+                                slug,
+                                version_str,
+                                mc_version,
+                                compatible_versions.join(", ")
+                            );
+                        }
+                    }
+                    anyhow::bail!(
                         "Version '{}' not found for plugin '{}/{}'",
                         version_str,
                         author,
                         slug
                     )
-                })?
+                }
+            }
         } else {
-            // Get the latest version - sort by created_at descending to ensure determinism
+            // Get the latest compatible version
+            if versions.is_empty() {
+                if let Some(mc_version) = minecraft_version {
+                    anyhow::bail!(
+                        "No versions of plugin '{}/{}' are compatible with Minecraft {}. Latest version supports: {}",
+                        author,
+                        slug,
+                        mc_version,
+                        all_versions
+                            .first()
+                            .map(|v| {
+                                v.platform_dependencies
+                                    .iter()
+                                    .map(|d| d.version.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_else(|| "unknown".to_string())
+                    );
+                } else {
+                    anyhow::bail!("No versions found for plugin '{}/{}'", author, slug);
+                }
+            }
+
+            // Sort by created_at descending to ensure determinism
             versions.sort_by(|a, b| {
                 // Sort by created_at descending (newest first)
                 b.created_at.cmp(&a.created_at)
             });
-            versions.first().ok_or_else(|| {
-                anyhow::anyhow!("No versions found for plugin '{}/{}'", author, slug)
-            })?
+            versions.first().unwrap()
         };
 
         // Get the primary download (usually the first one, or the one marked as primary)

@@ -3,6 +3,7 @@
 use crate::commands::lock;
 use crate::constants;
 use crate::manifest::{Manifest, PluginSpec};
+use crate::sources::REGISTRY;
 
 pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Parse spec format:
@@ -29,7 +30,25 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     let mut manifest = Manifest::load()
         .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
 
-    // Add plugin to manifest
+    // Validate compatibility before adding to manifest
+    let source_impl = REGISTRY.get_or_error(source)?;
+    source_impl.validate_plugin_id(&id)?;
+
+    // Check compatibility with Minecraft version
+    let minecraft_version = Some(manifest.minecraft.version.as_str());
+    let _resolved = source_impl
+        .resolve_version(&id, version.as_deref(), minecraft_version)
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to resolve plugin '{}' from source '{}': {}",
+                id,
+                source,
+                e
+            )
+        })?;
+
+    // Add plugin to manifest (compatibility check passed)
     let plugin_name = id.to_string();
     manifest.plugins.insert(
         plugin_name.clone(),

@@ -144,7 +144,8 @@ fn test_add_plugin_with_version() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
-    run_command(&["init"], test_dir);
+    // Initialize with Minecraft version compatible with worldedit 7.3.0
+    run_command(&["init", "1.20.1"], test_dir);
 
     let (success, output, _) = run_command(&["add", "modrinth:worldedit@7.3.0"], test_dir);
 
@@ -166,7 +167,8 @@ fn test_add_multiple_plugins() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
-    run_command(&["init"], test_dir);
+    // Initialize with Minecraft version compatible with worldedit 7.3.0
+    run_command(&["init", "1.20.1"], test_dir);
     run_command(&["add", "modrinth:fabric-api"], test_dir);
 
     let (success, _, _) = run_command(&["add", "modrinth:worldedit@7.3.0"], test_dir);
@@ -223,7 +225,8 @@ fn test_add_plugin_with_version_without_source() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
-    run_command(&["init"], test_dir);
+    // Initialize with Minecraft version compatible with worldedit 7.3.0
+    run_command(&["init", "1.20.1"], test_dir);
 
     // Add plugin with version but without source (should default to modrinth)
     let (success, output, _) = run_command(&["add", "worldedit@7.3.0"], test_dir);
@@ -313,7 +316,8 @@ fn test_add_with_no_update() {
     run_command(&["init"], test_dir);
 
     // Add plugin with --no-update flag
-    let (success, output, _) = run_command(&["add", "--no-update", "modrinth:fabric-api"], test_dir);
+    let (success, output, _) =
+        run_command(&["add", "--no-update", "modrinth:fabric-api"], test_dir);
 
     assert!(success, "Add command should succeed. output: {}", output);
     assert!(
@@ -381,8 +385,8 @@ fn test_add_and_remove_workflow() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
-    // Init
-    run_command(&["init"], test_dir);
+    // Init with compatible Minecraft version
+    run_command(&["init", "1.20.1"], test_dir);
 
     // Add two plugins
     run_command(&["add", "modrinth:fabric-api"], test_dir);

@@ -7,6 +7,7 @@ pub mod github;
 pub mod hangar;
 pub mod modrinth;
 pub mod source_trait;
+pub mod version_matcher;
 
 pub use github::GitHubSource;
 pub use hangar::HangarSource;
