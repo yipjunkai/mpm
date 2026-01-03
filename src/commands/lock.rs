@@ -2,7 +2,7 @@
 
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::Manifest;
-use crate::sources::modrinth;
+use crate::sources::{github, hangar, modrinth};
 use toml;
 
 pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
@@ -23,6 +23,12 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
         let (version, filename, url, hash) = match plugin_spec.source.as_str() {
             "modrinth" => {
                 modrinth::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref()).await?
+            }
+            "hangar" => {
+                hangar::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref()).await?
+            }
+            "github" => {
+                github::resolve_version(&plugin_spec.id, plugin_spec.version.as_deref()).await?
             }
             _ => {
                 anyhow::bail!("Unsupported source: {}", plugin_spec.source);

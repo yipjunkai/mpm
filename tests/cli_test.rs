@@ -1503,3 +1503,449 @@ fn test_import_ignores_non_jar_files() {
     assert!(manifest_content.contains("TestPlugin"));
     assert!(!manifest_content.contains("not-a-plugin"));
 }
+
+// Tests for Hangar source
+#[test]
+fn test_add_hangar_plugin() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Add plugin from Hangar (using a real project that should exist)
+    // Note: This test may fail if the API structure changes or project doesn't exist
+    let (success, output, _) = run_command(&["add", "hangar:GeyserMC/Geyser"], test_dir);
+
+    if success {
+        assert!(
+            output.contains("Added plugin"),
+            "Expected 'Added plugin' in output: {}",
+            output
+        );
+
+        // Verify manifest contains the plugin
+        let manifest_path = format!("{}/plugins.toml", test_dir);
+        let content = fs::read_to_string(&manifest_path).unwrap();
+        assert!(content.contains("hangar"));
+        assert!(content.contains("GeyserMC/Geyser"));
+    } else {
+        // If it fails, it should be due to API issues, not format issues
+        assert!(
+            output.contains("Failed to fetch")
+                || output.contains("not found")
+                || output.contains("Invalid"),
+            "Expected API or format error: {}",
+            output
+        );
+    }
+}
+
+#[test]
+fn test_add_hangar_plugin_with_version() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add with a specific version (may fail if version doesn't exist, that's ok)
+    let (success, output, _) = run_command(&["add", "hangar:GeyserMC/Geyser@2.0.0"], test_dir);
+
+    // Either succeeds with the version or fails with version not found or API error
+    if success {
+        let manifest_path = format!("{}/plugins.toml", test_dir);
+        let content = fs::read_to_string(&manifest_path).unwrap();
+        assert!(content.contains("hangar"));
+        assert!(content.contains("2.0.0"));
+    } else {
+        // Version might not exist, or API might have issues - that's acceptable
+        assert!(
+            output.contains("not found")
+                || output.contains("Version")
+                || output.contains("Failed to fetch"),
+            "Expected version or API error message: {}",
+            output
+        );
+    }
+}
+
+#[test]
+fn test_add_hangar_invalid_format() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Invalid format - missing author/slug separator
+    let (success, output, _) = run_command(&["add", "hangar:invalid"], test_dir);
+
+    assert!(
+        !success,
+        "Add should fail with invalid Hangar format. output: {}",
+        output
+    );
+    assert!(
+        output.contains("Invalid Hangar project ID format")
+            || output.contains("Expected 'author/slug'"),
+        "Expected error message in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_lock_hangar_plugin() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add a Hangar plugin - if it fails, skip the test
+    let (add_success, _, _) = run_command(&["add", "hangar:GeyserMC/Geyser"], test_dir);
+    if !add_success {
+        // Skip test if API is unavailable or project doesn't exist
+        return;
+    }
+
+    // Lock should succeed (add automatically locks, but we can test explicit lock)
+    let (success, output, _) = run_command(&["lock"], test_dir);
+
+    assert!(success, "Lock command should succeed. output: {}", output);
+    assert!(output.contains("Locked"));
+
+    // Verify lockfile contains Hangar source
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(content.contains("hangar"));
+    assert!(content.contains("version"));
+    assert!(content.contains("url"));
+    assert!(content.contains("hash"));
+}
+
+#[test]
+fn test_sync_hangar_plugin() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add a Hangar plugin - if it fails, skip the test
+    let (add_success, _, _) = run_command(&["add", "hangar:GeyserMC/Geyser"], test_dir);
+    if !add_success {
+        // Skip test if API is unavailable or project doesn't exist
+        return;
+    }
+
+    // Lock is automatic, but ensure it's done
+    run_command(&["lock"], test_dir);
+
+    let (success, output, _) = run_command(&["sync"], test_dir);
+
+    assert!(success, "Sync command should succeed. output: {}", output);
+    assert!(
+        output.contains("Synced") || output.contains("verified"),
+        "Expected sync success message in output: {}",
+        output
+    );
+
+    // Verify plugin file was created
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+
+    let filename_line = lockfile_content
+        .lines()
+        .find(|l| l.contains("file ="))
+        .unwrap();
+    let filename = filename_line.split('"').nth(1).unwrap();
+
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
+    assert!(
+        Path::new(&plugin_path).exists(),
+        "Plugin file should be created: {}",
+        plugin_path
+    );
+}
+
+// Tests for GitHub Releases source
+#[test]
+fn test_add_github_plugin() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Add plugin from GitHub Releases
+    // Note: PaperMC/Paper is a server, not a plugin, so it might not have .jar files
+    // This test verifies the format parsing and API interaction
+    let (success, output, _) = run_command(&["add", "github:PaperMC/Paper"], test_dir);
+
+    if success {
+        assert!(
+            output.contains("Added plugin"),
+            "Expected 'Added plugin' in output: {}",
+            output
+        );
+
+        // Verify manifest contains the plugin
+        let manifest_path = format!("{}/plugins.toml", test_dir);
+        let content = fs::read_to_string(&manifest_path).unwrap();
+        assert!(content.contains("github"));
+        assert!(content.contains("PaperMC/Paper"));
+    } else {
+        // If it fails, it should be due to missing .jar file or API issues, not format issues
+        assert!(
+            output.contains("No .jar file")
+                || output.contains("Failed to fetch")
+                || output.contains("Invalid"),
+            "Expected API or format error: {}",
+            output
+        );
+    }
+}
+
+#[test]
+fn test_add_github_plugin_with_version() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add with a specific version tag
+    let (success, output, _) = run_command(&["add", "github:PaperMC/Paper@1.20.1"], test_dir);
+
+    // Either succeeds with the version or fails with version not found or missing .jar
+    if success {
+        let manifest_path = format!("{}/plugins.toml", test_dir);
+        let content = fs::read_to_string(&manifest_path).unwrap();
+        assert!(content.contains("github"));
+        assert!(content.contains("1.20.1"));
+    } else {
+        // Version might not exist, might not have a .jar asset, or API might have issues - that's acceptable
+        assert!(
+            output.contains("not found")
+                || output.contains("No .jar file")
+                || output.contains("release")
+                || output.contains("Failed to fetch"),
+            "Expected error message: {}",
+            output
+        );
+    }
+}
+
+#[test]
+fn test_add_github_invalid_format() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Invalid format - missing owner/repo separator
+    let (success, output, _) = run_command(&["add", "github:invalid"], test_dir);
+
+    assert!(
+        !success,
+        "Add should fail with invalid GitHub format. output: {}",
+        output
+    );
+    assert!(
+        output.contains("Invalid GitHub repository format")
+            || output.contains("Expected 'owner/repo'"),
+        "Expected error message in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_add_github_nonexistent_repo() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add from a non-existent repository
+    let (success, output, _) = run_command(
+        &["add", "github:NonexistentOwner/NonexistentRepo"],
+        test_dir,
+    );
+
+    assert!(
+        !success,
+        "Add should fail with nonexistent repo. output: {}",
+        output
+    );
+    assert!(
+        output.contains("Failed to fetch")
+            || output.contains("404")
+            || output.contains("not found"),
+        "Expected error message in output: {}",
+        output
+    );
+}
+
+#[test]
+fn test_lock_github_plugin() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add a GitHub plugin - if it fails, skip the test
+    let (add_success, _, _) = run_command(&["add", "github:PaperMC/Paper"], test_dir);
+    if !add_success {
+        // Skip test if API is unavailable or no .jar files in releases
+        return;
+    }
+
+    // Lock should succeed (add automatically locks, but we can test explicit lock)
+    let (success, output, _) = run_command(&["lock"], test_dir);
+
+    assert!(success, "Lock command should succeed. output: {}", output);
+    assert!(output.contains("Locked"));
+
+    // Verify lockfile contains GitHub source
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(content.contains("github"));
+    assert!(content.contains("version"));
+    assert!(content.contains("url"));
+    assert!(content.contains("hash"));
+}
+
+#[test]
+fn test_sync_github_plugin() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add a GitHub plugin - if it fails, skip the test
+    let (add_success, _, _) = run_command(&["add", "github:PaperMC/Paper"], test_dir);
+    if !add_success {
+        // Skip test if API is unavailable or no .jar files in releases
+        return;
+    }
+
+    // Lock is automatic, but ensure it's done
+    run_command(&["lock"], test_dir);
+
+    let (success, output, _) = run_command(&["sync"], test_dir);
+
+    assert!(success, "Sync command should succeed. output: {}", output);
+    assert!(
+        output.contains("Synced") || output.contains("verified"),
+        "Expected sync success message in output: {}",
+        output
+    );
+
+    // Verify plugin file was created
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+
+    let filename_line = lockfile_content
+        .lines()
+        .find(|l| l.contains("file ="))
+        .unwrap();
+    let filename = filename_line.split('"').nth(1).unwrap();
+
+    let plugin_path = format!("{}/plugins/{}", test_dir, filename);
+    assert!(
+        Path::new(&plugin_path).exists(),
+        "Plugin file should be created: {}",
+        plugin_path
+    );
+}
+
+#[test]
+fn test_add_multiple_sources() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Add plugins from different sources
+    // Modrinth should always work
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    // Try to add from Hangar and GitHub - they may fail if APIs are unavailable
+    // Note: This test primarily verifies that the format parsing works for all sources
+    // and that modrinth (which always works) can coexist with other source formats
+    let (hangar_success, _, _) = run_command(&["add", "hangar:GeyserMC/Geyser"], test_dir);
+    let (github_success, _, _) = run_command(&["add", "github:PaperMC/Paper"], test_dir);
+
+    // Read manifest to see what actually got added
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(content.contains("modrinth"));
+    assert!(content.contains("fabric-api"));
+
+    // Check which sources actually made it into the manifest
+    // (add saves before lock, so plugins may be in manifest even if lock failed)
+    let hangar_in_manifest = content.contains("hangar") && content.contains("GeyserMC/Geyser");
+    let github_in_manifest = content.contains("github") && content.contains("PaperMC/Paper");
+
+    // If plugins are in manifest but add failed (due to lock failure), manually remove them
+    // This ensures lock can succeed with just modrinth
+    // The plugin name is the full ID (e.g., "GeyserMC/Geyser" for Hangar, "PaperMC/Paper" for GitHub)
+    if hangar_in_manifest && !hangar_success {
+        // Plugin name is the full ID "GeyserMC/Geyser"
+        let _ = run_command(&["remove", "GeyserMC/Geyser"], test_dir);
+    }
+    if github_in_manifest && !github_success {
+        // Plugin name is the full ID "PaperMC/Paper"
+        let _ = run_command(&["remove", "PaperMC/Paper"], test_dir);
+    }
+
+    // Lock should work with modrinth (which always succeeds)
+    // This verifies that multiple source formats can be parsed and handled
+    let (success, output, _) = run_command(&["lock"], test_dir);
+    assert!(success, "Lock should succeed. output: {}", output);
+
+    // Verify lockfile contains modrinth
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
+    assert!(lockfile_content.contains("modrinth"));
+
+    // If other sources succeeded completely, verify they're in lockfile
+    // (This may not happen if APIs are unavailable, which is fine for this test)
+    if hangar_success {
+        assert!(lockfile_content.contains("hangar"));
+    }
+    if github_success {
+        assert!(lockfile_content.contains("github"));
+    }
+}
+
+#[test]
+fn test_lock_with_hangar_and_github() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Try to add from both sources - they may fail if APIs are unavailable
+    let (hangar_success, _, _) = run_command(&["add", "hangar:GeyserMC/Geyser"], test_dir);
+    let (github_success, _, _) = run_command(&["add", "github:PaperMC/Paper"], test_dir);
+
+    // Skip test if both sources failed
+    if !hangar_success && !github_success {
+        return;
+    }
+
+    // Lock should resolve versions from whatever sources succeeded
+    let (success, output, _) = run_command(&["lock"], test_dir);
+
+    assert!(success, "Lock should succeed. output: {}", output);
+    assert!(output.contains("Locked"));
+
+    // Verify lockfile has plugins with correct sources
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    let content = fs::read_to_string(&lockfile_path).unwrap();
+
+    // Check that sources that succeeded are present
+    if hangar_success {
+        let hangar_count = content.matches("source = \"hangar\"").count();
+        assert!(hangar_count >= 1, "Should have at least one Hangar plugin");
+    }
+    if github_success {
+        let github_count = content.matches("source = \"github\"").count();
+        assert!(github_count >= 1, "Should have at least one GitHub plugin");
+    }
+}

@@ -48,6 +48,8 @@ The binary will be located at `target/release/mpm`.
 
    ```bash
    mpm add modrinth:fabric-api
+   mpm add hangar:GeyserMC/Geyser
+   mpm add github:PaperMC/Paper@1.20.1
    ```
 
 3. **Synchronize plugins**:
@@ -95,7 +97,14 @@ Add a plugin to the manifest. Automatically updates the lockfile.
 - `<spec>`: Plugin specification in format `[source:]id[@version]`
   - `fabric-api` - Adds from default source (Modrinth)
   - `worldedit@7.3.0` - Adds specific version
-  - `modrinth:fabric-api` - Explicitly specify source
+  - `modrinth:fabric-api` - Explicitly specify Modrinth source
+  - `hangar:GeyserMC/Geyser` - Add from Hangar (PaperMC repository)
+  - `github:PaperMC/Paper@1.20.1` - Add from GitHub Releases
+
+**Supported sources:**
+- `modrinth` - Modrinth plugin repository (default)
+- `hangar` - Hangar (PaperMC plugin repository), format: `author/slug`
+- `github` - GitHub Releases, format: `owner/repo`
 
 #### `mpm remove <name>`
 
@@ -203,9 +212,10 @@ This makes mpm suitable for use in CI/CD pipelines and scripts.
 # Initialize
 mpm init
 
-# Add plugins
-mpm add fabric-api
-mpm add worldedit
+# Add plugins from different sources
+mpm add fabric-api                    # Modrinth (default)
+mpm add hangar:GeyserMC/Geyser       # Hangar
+mpm add github:PaperMC/Paper         # GitHub Releases
 
 # Sync (downloads plugins)
 mpm sync
