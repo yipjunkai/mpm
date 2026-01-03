@@ -6,10 +6,8 @@ on:
     branches:
       - master
     paths-ignore:
-      - .github/**
-      - .cursor/**
-      - .vscode/**
-      - .gitignore
+      - LICENSE-*
+      - README.md
 
 # Cancel in-progress runs when a new commit is pushed (only for pull_request events)
 concurrency:
