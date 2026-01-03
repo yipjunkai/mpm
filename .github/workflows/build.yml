@@ -107,23 +107,56 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Determine release tag
-        id: release_tag
+      - name: Extract version from Cargo.toml
+        id: cargo_version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f 2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Determine or create release
+        id: release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get the latest release tag using GitHub API
-          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
-          TAG=$(echo "$RESPONSE" | jq -r '.tag_name // empty')
+          VERSION="${{ steps.cargo_version.outputs.version }}"
+          TAG="v${VERSION}"
 
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "No release found. Please create a release first."
-            exit 1
+          # Check if release already exists
+          RELEASE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG")
+
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id // empty')
+
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "Release $TAG does not exist. Creating new release..."
+
+            # Create the release
+            CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\": \"$TAG\", \"name\": \"$TAG\", \"body\": \"Release $TAG\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases")
+
+            HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -1)
+            CREATE_BODY=$(echo "$CREATE_RESPONSE" | head -1)
+
+            if [ "$HTTP_CODE" != "201" ]; then
+              echo "Error: Failed to create release (HTTP $HTTP_CODE)"
+              echo "$CREATE_BODY"
+              exit 1
+            fi
+
+            RELEASE_ID=$(echo "$CREATE_BODY" | jq -r '.id')
+            echo "Created release $TAG with ID: $RELEASE_ID"
+          else
+            echo "Release $TAG already exists (ID: $RELEASE_ID)"
           fi
-          echo "Using latest release tag: $TAG"
+
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
 
       - name: Create release archives
         shell: bash
@@ -147,21 +180,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.release_tag.outputs.tag }}"
+          TAG="${{ steps.release.outputs.tag }}"
+          RELEASE_ID="${{ steps.release.outputs.release_id }}"
           cd artifacts
 
-          # Get the release info
+          echo "Uploading binaries to release $TAG (ID: $RELEASE_ID)"
+
+          # Get the release info to check for existing assets
           RELEASE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG")
-
-          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id // empty')
-
-          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
-            echo "Error: Release $TAG not found"
-            exit 1
-          fi
-
-          echo "Found release ID: $RELEASE_ID"
+            "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID")
 
           # Upload each archive to the release using GitHub API
           for archive in *.zip *.tar.gz; do
