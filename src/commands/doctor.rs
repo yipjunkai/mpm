@@ -284,16 +284,14 @@ fn check_plugins(plugins_dir: &str, lockfile: &Lockfile) -> (PluginsInfo, Vec<Is
         // Check for unmanaged files (sorted for determinism)
         if let Ok(entries) = fs::read_dir(plugins_path) {
             let mut unmanaged_files: Vec<String> = Vec::new();
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                            if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                                unmanaged_files.push(filename.to_string());
-                            }
-                        }
-                    }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                    && filename.ends_with(".jar")
+                    && !managed_files.contains(filename)
+                {
+                    unmanaged_files.push(filename.to_string());
                 }
             }
             unmanaged_files.sort(); // Deterministic order

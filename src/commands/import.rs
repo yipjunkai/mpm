@@ -118,44 +118,43 @@ fn scan_plugins_dir(
         let path = entry.path();
 
         // Only process .jar files
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "jar" {
-                    let filename = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?
+        if path.is_file()
+            && let Some(ext) = path.extension()
+            && ext == "jar"
+        {
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?
+                .to_string();
+
+            // Try to read plugin.yml from JAR
+            let (name, version) = match read_plugin_yml_from_jar(&path) {
+                Ok((n, v)) => (n, v),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Could not read plugin.yml from {}: {}",
+                        filename, e
+                    );
+                    // Fallback to filename without .jar extension
+                    let fallback_name = filename
+                        .strip_suffix(".jar")
+                        .unwrap_or(&filename)
                         .to_string();
-
-                    // Try to read plugin.yml from JAR
-                    let (name, version) = match read_plugin_yml_from_jar(&path) {
-                        Ok((n, v)) => (n, v),
-                        Err(e) => {
-                            eprintln!(
-                                "Warning: Could not read plugin.yml from {}: {}",
-                                filename, e
-                            );
-                            // Fallback to filename without .jar extension
-                            let fallback_name = filename
-                                .strip_suffix(".jar")
-                                .unwrap_or(&filename)
-                                .to_string();
-                            (fallback_name, None)
-                        }
-                    };
-
-                    // Compute SHA-256 hash
-                    let hash = match compute_sha256(&path) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            eprintln!("Warning: Could not compute hash for {}: {}", filename, e);
-                            continue; // Skip this plugin if hash computation fails
-                        }
-                    };
-
-                    plugins.push((name, filename, version, hash));
+                    (fallback_name, None)
                 }
-            }
+            };
+
+            // Compute SHA-256 hash
+            let hash = match compute_sha256(&path) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("Warning: Could not compute hash for {}: {}", filename, e);
+                    continue; // Skip this plugin if hash computation fails
+                }
+            };
+
+            plugins.push((name, filename, version, hash));
         }
     }
 

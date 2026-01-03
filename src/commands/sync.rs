@@ -31,19 +31,15 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     let backup_dir = format!("{}/.plugins.backup", plugins_dir);
 
     // Clean up any leftover staging/backup directories
-    if !dry_run {
-        if let Err(e) = cleanup_temp_dirs(&plugins_dir) {
-            eprintln!("Error: Failed to cleanup temp directories: {}", e);
-            return Ok(2);
-        }
+    if !dry_run && let Err(e) = cleanup_temp_dirs(&plugins_dir) {
+        eprintln!("Error: Failed to cleanup temp directories: {}", e);
+        return Ok(2);
     }
 
     // Create staging directory
-    if !dry_run {
-        if let Err(e) = fs::create_dir_all(&staging_dir) {
-            eprintln!("Error: Failed to create staging directory: {}", e);
-            return Ok(2);
-        }
+    if !dry_run && let Err(e) = fs::create_dir_all(&staging_dir) {
+        eprintln!("Error: Failed to create staging directory: {}", e);
+        return Ok(2);
     }
 
     // Create backup of current plugins directory
@@ -79,11 +75,11 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
             if target_path.exists() {
                 // Parse hash to get algorithm
                 let (algorithm, _) = plugin.parse_hash()?;
-                if let Ok(existing_hash) = verify_plugin_hash(&target_path, algorithm) {
-                    if existing_hash == plugin.hash {
-                        println!("  ✓ {} (already synced)", plugin.name);
-                        continue;
-                    }
+                if let Ok(existing_hash) = verify_plugin_hash(&target_path, algorithm)
+                    && existing_hash == plugin.hash
+                {
+                    println!("  ✓ {} (already synced)", plugin.name);
+                    continue;
                 }
             }
 
@@ -109,19 +105,19 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         if dry_run {
             // Just preview what would be removed
             let plugins_path = Path::new(&plugins_dir);
-            if plugins_path.exists() {
-                if let Ok(entries) = fs::read_dir(plugins_path) {
-                    for entry in entries {
-                        let entry = entry?;
-                        let path = entry.path();
-                        if path.is_file() {
-                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                                if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                                    println!("  → Would remove unmanaged file: {}", filename);
-                                    has_changes = true;
-                                }
-                            }
-                        }
+            if plugins_path.exists()
+                && let Ok(entries) = fs::read_dir(plugins_path)
+            {
+                for entry in entries {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file()
+                        && let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                        && filename.ends_with(".jar")
+                        && !managed_files.contains(filename)
+                    {
+                        println!("  → Would remove unmanaged file: {}", filename);
+                        has_changes = true;
                     }
                 }
             }
@@ -148,10 +144,11 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
             eprintln!("Error: {}", e);
 
             // Cleanup and restore on error
-            if !dry_run && needs_restore {
-                if let Err(restore_err) = restore_backup(&plugins_dir, &backup_dir) {
-                    eprintln!("Warning: Failed to restore backup: {}", restore_err);
-                }
+            if !dry_run
+                && needs_restore
+                && let Err(restore_err) = restore_backup(&plugins_dir, &backup_dir)
+            {
+                eprintln!("Warning: Failed to restore backup: {}", restore_err);
             }
 
             // Clean up staging and backup directories
@@ -164,11 +161,9 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     };
 
     // Clean up staging and backup directories
-    if !dry_run {
-        if let Err(e) = cleanup_temp_dirs(&plugins_dir) {
-            eprintln!("Warning: Failed to cleanup temp directories: {}", e);
-            // Don't fail on cleanup, but log it
-        }
+    if !dry_run && let Err(e) = cleanup_temp_dirs(&plugins_dir) {
+        eprintln!("Warning: Failed to cleanup temp directories: {}", e);
+        // Don't fail on cleanup, but log it
     }
 
     if dry_run {
@@ -279,14 +274,14 @@ fn restore_backup(plugins_dir: &str, backup_dir: &str) -> anyhow::Result<()> {
 
     // Remove current .jar files
     let plugins_path = Path::new(plugins_dir);
-    if plugins_path.exists() {
-        if let Ok(entries) = fs::read_dir(plugins_path) {
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar") {
-                    fs::remove_file(&path)?;
-                }
+    if plugins_path.exists()
+        && let Ok(entries) = fs::read_dir(plugins_path)
+    {
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar") {
+                fs::remove_file(&path)?;
             }
         }
     }
@@ -313,49 +308,49 @@ fn atomic_replace(plugins_dir: &str, staging_dir: &str, _backup_dir: &str) -> an
 
     // Get list of files in staging (these are the ones we downloaded)
     let mut staged_files = std::collections::HashSet::new();
-    if staging_path.exists() {
-        if let Ok(entries) = fs::read_dir(staging_path) {
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                        staged_files.insert(filename.to_string());
-                    }
-                }
+    if staging_path.exists()
+        && let Ok(entries) = fs::read_dir(staging_path)
+    {
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file()
+                && let Some(filename) = path.file_name().and_then(|n| n.to_str())
+            {
+                staged_files.insert(filename.to_string());
             }
         }
     }
 
     // Remove .jar files that are being replaced (exist in staging)
-    if plugins_path.exists() {
-        if let Ok(entries) = fs::read_dir(plugins_path) {
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                // Only remove .jar files that are being replaced, preserve manifest and lockfile
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar") {
-                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                        if staged_files.contains(filename) {
-                            fs::remove_file(&path)?;
-                        }
-                    }
-                }
+    if plugins_path.exists()
+        && let Ok(entries) = fs::read_dir(plugins_path)
+    {
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            // Only remove .jar files that are being replaced, preserve manifest and lockfile
+            if path.is_file()
+                && path.extension().and_then(|s| s.to_str()) == Some("jar")
+                && let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                && staged_files.contains(filename)
+            {
+                fs::remove_file(&path)?;
             }
         }
     }
 
     // Copy verified files from staging to plugins directory
-    if staging_path.exists() {
-        if let Ok(entries) = fs::read_dir(staging_path) {
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    let filename = path.file_name().unwrap();
-                    let target_path = plugins_path.join(filename);
-                    fs::copy(&path, &target_path)?;
-                }
+    if staging_path.exists()
+        && let Ok(entries) = fs::read_dir(staging_path)
+    {
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let filename = path.file_name().unwrap();
+                let target_path = plugins_path.join(filename);
+                fs::copy(&path, &target_path)?;
             }
         }
     }
@@ -377,14 +372,14 @@ fn remove_unmanaged_files(
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() {
-                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    // Only remove .jar files that aren't managed
-                    if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                        println!("  → Removing unmanaged file: {}", filename);
-                        fs::remove_file(&path)?;
-                        removed_any = true;
-                    }
+            if path.is_file()
+                && let Some(filename) = path.file_name().and_then(|n| n.to_str())
+            {
+                // Only remove .jar files that aren't managed
+                if filename.ends_with(".jar") && !managed_files.contains(filename) {
+                    println!("  → Removing unmanaged file: {}", filename);
+                    fs::remove_file(&path)?;
+                    removed_any = true;
                 }
             }
         }
