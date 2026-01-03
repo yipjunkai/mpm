@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+/// Plugin information scanned from the plugins directory
+/// Tuple contains: (name, filename, version_option, hash)
+type ScannedPlugin = (String, String, Option<String>, String);
+
 #[derive(Debug, Deserialize, Serialize)]
 struct PluginYml {
     name: Option<String>,
@@ -106,9 +110,7 @@ pub fn import_plugins() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn scan_plugins_dir(
-    plugins_dir: &str,
-) -> anyhow::Result<Vec<(String, String, Option<String>, String)>> {
+fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<ScannedPlugin>> {
     let plugins_path = Path::new(plugins_dir);
     let mut plugins = Vec::new();
 
