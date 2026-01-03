@@ -43,7 +43,10 @@ async fn get_plugin(slug: &str) -> anyhow::Result<Project> {
     Ok(plugin)
 }
 
-async fn get_versions(plugin_id: &str, minecraft_version: Option<&str>) -> anyhow::Result<Vec<Version>> {
+async fn get_versions(
+    plugin_id: &str,
+    minecraft_version: Option<&str>,
+) -> anyhow::Result<Vec<Version>> {
     let mut url = format!("https://api.modrinth.com/v2/project/{}/version", plugin_id);
 
     // Add game_versions filter if Minecraft version is provided
@@ -97,17 +100,16 @@ impl PluginSource for ModrinthSource {
 
         let version = if let Some(version_str) = requested_version {
             // Find the specific version in filtered results
-            let found_version = versions
-                .iter()
-                .find(|v| v.version_number == version_str);
+            let found_version = versions.iter().find(|v| v.version_number == version_str);
 
             match found_version {
                 Some(v) => {
                     // Verify compatibility if Minecraft version is specified
                     if let Some(mc_version) = minecraft_version {
-                        let is_compatible = v.game_versions.iter().any(|gv| {
-                            version_matcher::matches_mc_version(gv, mc_version)
-                        });
+                        let is_compatible = v
+                            .game_versions
+                            .iter()
+                            .any(|gv| version_matcher::matches_mc_version(gv, mc_version));
                         if !is_compatible {
                             anyhow::bail!(
                                 "Plugin '{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
@@ -126,7 +128,10 @@ impl PluginSource for ModrinthSource {
                         if all_versions.is_empty() {
                             all_versions = get_versions(&plugin.id, None).await?;
                         }
-                        if let Some(incompatible_version) = all_versions.iter().find(|v| v.version_number == version_str) {
+                        if let Some(incompatible_version) = all_versions
+                            .iter()
+                            .find(|v| v.version_number == version_str)
+                        {
                             anyhow::bail!(
                                 "Plugin '{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
                                 plugin_id,

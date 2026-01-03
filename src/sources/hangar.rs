@@ -162,24 +162,23 @@ impl PluginSource for HangarSource {
                 }
                 None => {
                     // Check if version exists but is incompatible
-                    if let Some(mc_version) = minecraft_version {
-                        if let Some(incompatible_version) =
+                    if let Some(mc_version) = minecraft_version
+                        && let Some(incompatible_version) =
                             all_versions.iter().find(|v| v.name == version_str)
-                        {
-                            let compatible_versions: Vec<String> = incompatible_version
-                                .platform_dependencies
-                                .iter()
-                                .map(|d| d.version.clone())
-                                .collect();
-                            anyhow::bail!(
-                                "Plugin '{}/{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
-                                author,
-                                slug,
-                                version_str,
-                                mc_version,
-                                compatible_versions.join(", ")
-                            );
-                        }
+                    {
+                        let compatible_versions: Vec<String> = incompatible_version
+                            .platform_dependencies
+                            .iter()
+                            .map(|d| d.version.clone())
+                            .collect();
+                        anyhow::bail!(
+                            "Plugin '{}/{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
+                            author,
+                            slug,
+                            version_str,
+                            mc_version,
+                            compatible_versions.join(", ")
+                        );
                     }
                     anyhow::bail!(
                         "Version '{}' not found for plugin '{}/{}'",

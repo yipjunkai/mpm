@@ -32,12 +32,12 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
 
     // Validate compatibility before adding to manifest
     let source_impl = REGISTRY.get_or_error(source)?;
-    source_impl.validate_plugin_id(&id)?;
+    source_impl.validate_plugin_id(id)?;
 
     // Check compatibility with Minecraft version
     let minecraft_version = Some(manifest.minecraft.version.as_str());
     let _resolved = source_impl
-        .resolve_version(&id, version.as_deref(), minecraft_version)
+        .resolve_version(id, version.as_deref(), minecraft_version)
         .await
         .map_err(|e| {
             anyhow::anyhow!(
