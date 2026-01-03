@@ -794,7 +794,13 @@ fn test_doctor_json_output_drift() {
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "warning");
     assert_eq!(json["exit_code"], 1);
-    assert!(json["issues"].as_array().unwrap().iter().any(|i| i["severity"] == "warning"));
+    assert!(
+        json["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["severity"] == "warning")
+    );
 }
 
 #[test]
@@ -825,7 +831,13 @@ fn test_doctor_json_output_failure() {
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "error");
     assert_eq!(json["exit_code"], 2);
-    assert!(json["issues"].as_array().unwrap().iter().any(|i| i["severity"] == "error"));
+    assert!(
+        json["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["severity"] == "error")
+    );
 }
 
 #[test]
