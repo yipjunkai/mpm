@@ -4,7 +4,7 @@ use crate::commands::lock;
 use crate::constants;
 use crate::manifest::{Manifest, PluginSpec};
 
-pub async fn add(spec: String) -> anyhow::Result<()> {
+pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Parse spec format:
     // - source:id or source:id@version (e.g., modrinth:fabric-api)
     // - id or id@version (defaults to modrinth source)
@@ -43,8 +43,10 @@ pub async fn add(spec: String) -> anyhow::Result<()> {
     manifest.save()?;
     println!("Added plugin '{}' from source '{}'", plugin_name, source);
 
-    // Automatically lock after adding
-    lock::lock(false).await?;
+    // Automatically lock after adding unless --no-update is specified
+    if !no_update {
+        lock::lock(false).await?;
+    }
 
     Ok(())
 }

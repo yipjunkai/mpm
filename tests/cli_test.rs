@@ -306,6 +306,77 @@ fn test_remove_fails_without_init() {
 }
 
 #[test]
+fn test_add_with_no_update() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+
+    // Add plugin with --no-update flag
+    let (success, output, _) = run_command(&["add", "--no-update", "modrinth:fabric-api"], test_dir);
+
+    assert!(success, "Add command should succeed. output: {}", output);
+    assert!(
+        output.contains("Added plugin 'fabric-api'"),
+        "Expected 'Added plugin' in output: {}",
+        output
+    );
+
+    // Verify manifest contains the plugin
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(content.contains("fabric-api"));
+
+    // Verify lockfile was NOT created (since --no-update was used)
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        !Path::new(&lockfile_path).exists(),
+        "Lockfile should not exist when --no-update is used"
+    );
+}
+
+#[test]
+fn test_remove_with_no_update() {
+    let temp_dir = setup_test_dir();
+    let test_dir = temp_dir.path().to_str().unwrap();
+
+    run_command(&["init"], test_dir);
+    run_command(&["add", "modrinth:fabric-api"], test_dir);
+
+    // Verify lockfile exists after add
+    let lockfile_path = format!("{}/plugins.lock", test_dir);
+    assert!(
+        Path::new(&lockfile_path).exists(),
+        "Lockfile should exist after add"
+    );
+
+    // Read lockfile content before remove
+    let lockfile_content_before = fs::read_to_string(&lockfile_path).unwrap();
+
+    // Remove plugin with --no-update flag
+    let (success, output, _) = run_command(&["remove", "--no-update", "fabric-api"], test_dir);
+
+    assert!(success, "Remove command should succeed. output: {}", output);
+    assert!(
+        output.contains("Removed plugin 'fabric-api'"),
+        "Expected 'Removed plugin' in output: {}",
+        output
+    );
+
+    // Verify manifest no longer contains the plugin
+    let manifest_path = format!("{}/plugins.toml", test_dir);
+    let content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(!content.contains("fabric-api"));
+
+    // Verify lockfile was NOT updated (content should be the same)
+    let lockfile_content_after = fs::read_to_string(&lockfile_path).unwrap();
+    assert_eq!(
+        lockfile_content_before, lockfile_content_after,
+        "Lockfile should not be updated when --no-update is used"
+    );
+}
+
+#[test]
 fn test_add_and_remove_workflow() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();

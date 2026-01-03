@@ -41,6 +41,9 @@ pub enum Commands {
     Add {
         /// Plugin specification (id[@version] or source:id[@version])
         spec: String,
+        /// Skip automatic lockfile update after adding
+        #[arg(long)]
+        no_update: bool,
     },
     /// Remove a plugin from the manifest
     ///
@@ -48,6 +51,9 @@ pub enum Commands {
     Remove {
         /// Plugin name to remove
         spec: String,
+        /// Skip automatic lockfile update after removing
+        #[arg(long)]
+        no_update: bool,
     },
     /// Generate or update the lockfile
     ///

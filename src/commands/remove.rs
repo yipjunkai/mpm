@@ -3,7 +3,7 @@
 use crate::commands::lock;
 use crate::manifest::Manifest;
 
-pub async fn remove(spec: String) -> anyhow::Result<()> {
+pub async fn remove(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Load existing manifest
     let mut manifest = Manifest::load()
         .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
@@ -13,8 +13,10 @@ pub async fn remove(spec: String) -> anyhow::Result<()> {
         manifest.save()?;
         println!("Removed plugin '{}'", spec);
 
-        // Automatically lock after removing
-        lock::lock(false).await?;
+        // Automatically lock after removing unless --no-update is specified
+        if !no_update {
+            lock::lock(false).await?;
+        }
     } else {
         anyhow::bail!("Plugin '{}' not found in manifest", spec);
     }
