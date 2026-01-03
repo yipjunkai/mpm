@@ -1,0 +1,278 @@
+# mpm - Minecraft Plugin Manager
+
+A deterministic plugin manager for Minecraft servers that ensures reproducible plugin installations through lockfiles and hash verification.
+
+## Features
+
+- **Deterministic installations**: Lockfile-based version pinning ensures reproducible plugin setups
+- **Hash verification**: All plugins are verified against SHA-256/SHA-512 hashes for security
+- **Modrinth integration**: Seamlessly add plugins from Modrinth
+- **Automatic lockfile generation**: Lockfile is automatically updated when adding or removing plugins
+- **Health checks**: Built-in `doctor` command to verify plugin integrity
+- **CI/CD friendly**: JSON output format for automated health checks
+
+## Installation
+
+### Building from Source
+
+```bash
+git clone <repository-url>
+cd mpm
+cargo build --release
+```
+
+The binary will be located at `target/release/mpm`.
+
+## Usage
+
+### Getting Started
+
+#### New Installation
+
+1. **Initialize a new project**:
+
+   ```bash
+   mpm init
+   ```
+
+   This creates a `plugins.toml` manifest file with the default Minecraft version.
+
+2. **Add plugins**:
+
+   ```bash
+   mpm add fabric-api
+   mpm add worldedit@7.3.0
+   ```
+
+   You can specify a version with `@version`, or omit it to use the latest compatible version. The source defaults to Modrinth, but you can specify it explicitly:
+
+   ```bash
+   mpm add modrinth:fabric-api
+   ```
+
+3. **Synchronize plugins**:
+
+   ```bash
+   mpm sync
+   ```
+
+   This downloads all plugins specified in the lockfile to the `plugins/` directory.
+
+#### Existing Installation
+
+If you already have a `plugins/` directory with plugin JAR files, you can import them:
+
+```bash
+mpm import
+```
+
+This command:
+
+- Scans the `plugins/` directory for JAR files
+- Reads plugin metadata from each JAR
+- Computes SHA-256 hashes for verification
+- Generates `plugins.toml` and `plugins.lock` files
+
+**Note**: The `import` command requires that `plugins.toml` does not already exist. Plugins are marked with source "unknown" since they weren't installed via mpm.
+
+After importing, you can continue using mpm normally:
+
+- Run `mpm sync` to ensure all plugins match the lockfile
+- Use `mpm add` and `mpm remove` to manage plugins going forward
+
+### Commands
+
+#### `mpm init [version]`
+
+Initialize a new plugin manifest. Creates `plugins.toml` in the current directory.
+
+- `version`: Minecraft version (default: 1.21.11)
+
+#### `mpm add <spec>`
+
+Add a plugin to the manifest. Automatically updates the lockfile.
+
+- `<spec>`: Plugin specification in format `[source:]id[@version]`
+  - `fabric-api` - Adds from default source (Modrinth)
+  - `worldedit@7.3.0` - Adds specific version
+  - `modrinth:fabric-api` - Explicitly specify source
+
+#### `mpm remove <name>`
+
+Remove a plugin from the manifest. Automatically updates the lockfile.
+
+- `<name>`: Plugin name (as it appears in the manifest)
+
+#### `mpm lock [--dry-run]`
+
+Generate or update the lockfile with resolved plugin versions, URLs, and hashes.
+
+- `--dry-run`: Preview changes without writing the lockfile
+  - Exit code 0: No changes needed
+  - Exit code 1: Changes would be made
+
+#### `mpm sync [--dry-run]`
+
+Synchronize the `plugins/` directory with the lockfile. Downloads missing plugins, verifies hashes, and removes unmanaged files.
+
+- `--dry-run`: Preview changes without modifying the plugins directory
+  - Exit code 0: No changes needed
+  - Exit code 1: Changes would be made
+
+#### `mpm doctor [--json]`
+
+Check plugin manager health. Verifies manifest, lockfile, and plugin files.
+
+- `--json`: Output results in JSON format (useful for CI/CD)
+- Exit codes:
+  - 0: Healthy (no issues)
+  - 1: Warnings only (e.g., unmanaged files)
+  - 2: Errors present (e.g., missing files, hash mismatches)
+
+#### `mpm import`
+
+Import existing plugins from the `plugins/` directory. Scans for JAR files, reads plugin metadata, computes hashes, and generates `plugins.toml` and `plugins.lock`.
+
+**Note**: Requires that `plugins.toml` does not already exist.
+
+## File Structure
+
+```text
+.
+├── plugins.toml      # Plugin manifest (human-editable)
+├── plugins.lock      # Lockfile (machine-generated, deterministic)
+└── plugins/          # Plugin files directory
+    └── *.jar         # Plugin JAR files
+```
+
+### plugins.toml
+
+The manifest file defines which plugins to install:
+
+```toml
+[minecraft]
+version = "1.21.11"
+
+[plugins]
+fabric-api = { source = "modrinth", id = "fabric-api" }
+worldedit = { source = "modrinth", id = "worldedit", version = "7.3.0" }
+```
+
+### plugins.lock
+
+The lockfile (automatically generated) contains exact versions, URLs, and hashes:
+
+```toml
+[[plugin]]
+name = "fabric-api"
+source = "modrinth"
+version = "0.140.3+26.1"
+file = "fabric-api-0.140.3+26.1.jar"
+url = "https://cdn.modrinth.com/data/..."
+hash = "sha512:..."
+```
+
+## Configuration
+
+### Environment Variables
+
+- `PM_DIR`: Override the configuration directory (default: current directory)
+- `PM_PLUGINS_DIR`: Override the plugins directory path (default: `{PM_DIR}/plugins/` or `./plugins/` if `PM_DIR` is not set)
+
+### Default Values
+
+- Default Minecraft version: `1.21.11`
+- Default plugin source: `modrinth`
+- Plugins directory: `plugins/` (relative to config directory, or `PM_PLUGINS_DIR` if set)
+
+## Exit Codes
+
+All commands follow consistent exit code semantics:
+
+- **0**: Success / No changes detected
+- **1**: Changes detected / Warnings only
+- **2+**: Errors present
+
+This makes mpm suitable for use in CI/CD pipelines and scripts.
+
+## Examples
+
+### Basic Workflow
+
+```bash
+# Initialize
+mpm init
+
+# Add plugins
+mpm add fabric-api
+mpm add worldedit
+
+# Sync (downloads plugins)
+mpm sync
+
+# Check health
+mpm doctor
+```
+
+### CI/CD Integration
+
+```bash
+# Check health in CI
+mpm doctor --json | jq '.exit_code'  # Returns 0, 1, or 2
+
+# Dry-run before deploying
+mpm sync --dry-run
+if [ $? -eq 1 ]; then
+    echo "Plugins need to be updated"
+    mpm sync
+fi
+```
+
+### Importing Existing Plugins
+
+If you have an existing `plugins/` directory with JAR files but no manifest, you can import them:
+
+```bash
+mpm import
+```
+
+This will:
+
+- Scan the `plugins/` directory for all JAR files
+- Extract plugin metadata (name, version) from each JAR
+- Compute SHA-256 hashes for verification
+- Generate `plugins.toml` and `plugins.lock` files
+
+**Important**:
+
+- The `plugins.toml` file must not exist before running import
+- Imported plugins are marked with source "unknown" since they weren't installed via mpm
+- After importing, you can use `mpm sync` to ensure everything matches the lockfile
+
+## Development
+
+### Building
+
+```bash
+cargo build
+```
+
+### Testing
+
+```bash
+cargo test
+```
+
+### Running
+
+```bash
+cargo run -- <command>
+```
+
+## License
+
+[Add your license here]
+
+## Contributing
+
+[Add contributing guidelines here]
