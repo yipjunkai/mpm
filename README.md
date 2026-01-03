@@ -14,13 +14,15 @@ mpm is a native Rust-based CLI for Minecraft servers. It brings modern DevOps pr
 
 - **Integrity Verification:** Automated hash checking for every download to prevent corruption or tampering.
 - **Atomic Sync:** Downloads and verifies the entire environment before updating your live folder to prevent broken states.
+- **Version Compatibility:** Automatic validation that plugins are compatible with your Minecraft version when adding them.
 
 ## 🚀 Coming Soon (In no particular order)
 
-- [ ] **SpigotMC Integration:** Support for downloading plugins from SpigotMC's plugin repository.
+- [ ] **SpigotMC Integration:** Support for downloading plugins from SpigotMC's plugin repository with Minecraft version compatibility checking.
 - [ ] **Hosting Panel Integration:** Native support for Pterodactyl and WINGS for seamless, one-click managed deployments.
 - [ ] **Expanded Sources:** Support for custom repositories, private mirrors, and direct Jenkins/CI build artifacts.
-- [ ] **Intelligent Dependency Resolution:** Automated discovery and version-matching for required library plugins and APIs.
+- [ ] **Version Range Support:** Support for version ranges (e.g., `>=1.20.0,<1.21.0`) in compatibility checking.
+- [ ] **GitHub Version Detection:** Parse release notes or tags to detect Minecraft version compatibility for GitHub Releases.
 
 ## Installation
 
@@ -63,6 +65,8 @@ The binary will be located at `target/release/mpm`.
    mpm add github:PaperMC/Paper@1.20.1
    ```
 
+   **Version Compatibility:** When adding a plugin, mpm automatically checks if it's compatible with the Minecraft version specified in your manifest. If a plugin version is incompatible, you'll get a clear error message with the supported Minecraft versions. This prevents adding plugins that won't work with your server.
+
 3. **Synchronize plugins**:
 
    ```bash
@@ -101,9 +105,9 @@ Initialize a new plugin manifest. Creates `plugins.toml` in the current director
 
 - `version`: Minecraft version (default: 1.21.11)
 
-#### `mpm add <spec>`
+#### `mpm add <spec> [--no-update]`
 
-Add a plugin to the manifest. Automatically updates the lockfile.
+Add a plugin to the manifest. Automatically validates compatibility with the Minecraft version in your manifest and updates the lockfile.
 
 - `<spec>`: Plugin specification in format `[source:]id[@version]`
   - `fabric-api` - Adds from default source (Modrinth)
@@ -111,29 +115,51 @@ Add a plugin to the manifest. Automatically updates the lockfile.
   - `modrinth:fabric-api` - Explicitly specify Modrinth source
   - `hangar:GeyserMC/Geyser` - Add from Hangar (PaperMC repository)
   - `github:PaperMC/Paper@1.20.1` - Add from GitHub Releases
+- `--no-update`: Skip automatic lockfile update after adding
+
+**Version Compatibility Checking:**
+
+When adding a plugin, mpm validates that it's compatible with the Minecraft version specified in your `plugins.toml` manifest:
+
+- **Modrinth & Hangar:** Full compatibility checking - only compatible plugin versions are resolved
+- **GitHub:** Warning displayed (GitHub Releases don't include Minecraft version metadata)
+
+If a plugin version is incompatible, you'll receive an error message like:
+
+```text
+Error: Plugin 'worldedit' version '7.3.0' is not compatible with Minecraft 1.21.11.
+Compatible versions: 1.20, 1.20.1, 1.20.2, 1.20.3, 1.20.4
+```
+
+This ensures you only add plugins that will work with your server version.
 
 **Supported sources:**
 
-| Source     | Description                          | Format                                    | Status         |
-| ---------- | ------------------------------------ | ----------------------------------------- | -------------- |
-| `modrinth` | Modrinth plugin repository (default) | `plugin-id` or `plugin-id@version`        | ✅ Available   |
-| `hangar`   | Hangar (PaperMC plugin repository)   | `author/slug` or `author/slug@version`    | ✅ Available   |
-| `github`   | GitHub Releases                      | `owner/repo` or `owner/repo@tag`          | ✅ Available   |
-| `spigotmc` | SpigotMC plugin repository           | `resource-id` or `resource-id@version-id` | 🚧 In Progress |
+| Source     | Description                          | Format                                    | MC Version Check | Status         |
+| ---------- | ------------------------------------ | ----------------------------------------- | ---------------- | -------------- |
+| `modrinth` | Modrinth plugin repository (default) | `plugin-id` or `plugin-id@version`        | ✅ Yes           | ✅ Available   |
+| `hangar`   | Hangar (PaperMC plugin repository)   | `author/slug` or `author/slug@version`    | ✅ Yes           | ✅ Available   |
+| `github`   | GitHub Releases                      | `owner/repo` or `owner/repo@tag`          | ⚠️ Warning only  | ✅ Available   |
+| `spigotmc` | SpigotMC plugin repository           | `resource-id` or `resource-id@version-id` | 🚧 Coming soon   | 🚧 In Progress |
 
-#### `mpm remove <name>`
+**Note:** GitHub Releases don't include Minecraft version metadata, so compatibility cannot be automatically verified. A warning will be displayed when adding GitHub plugins.
+
+#### `mpm remove <name> [--no-update]`
 
 Remove a plugin from the manifest. Automatically updates the lockfile.
 
 - `<name>`: Plugin name (as it appears in the manifest)
+- `--no-update`: Skip automatic lockfile update after removing
 
 #### `mpm lock [--dry-run]`
 
-Generate or update the lockfile with resolved plugin versions, URLs, and hashes.
+Generate or update the lockfile with resolved plugin versions, URLs, and hashes. Only resolves plugin versions that are compatible with the Minecraft version specified in your manifest.
 
 - `--dry-run`: Preview changes without writing the lockfile
   - Exit code 0: No changes needed
   - Exit code 1: Changes would be made
+
+**Note:** The lock command filters plugin versions by Minecraft compatibility, ensuring your lockfile only contains compatible versions. This is especially useful if you manually edit `plugins.toml`.
 
 #### `mpm sync [--dry-run]`
 
@@ -171,7 +197,7 @@ Import existing plugins from the `plugins/` directory. Scans for JAR files, read
 
 ### plugins.toml
 
-The manifest file defines which plugins to install:
+The manifest file defines which plugins to install and the target Minecraft version:
 
 ```toml
 [minecraft]
@@ -181,6 +207,8 @@ version = "1.21.11"
 fabric-api = { source = "modrinth", id = "fabric-api" }
 worldedit = { source = "modrinth", id = "worldedit", version = "7.3.0" }
 ```
+
+**Important:** The `[minecraft]` version determines which plugin versions are resolved. When you run `mpm add`, only plugin versions compatible with this Minecraft version will be added. If you manually edit `plugins.toml` and add an incompatible plugin, `mpm lock` will filter it out automatically.
 
 ### plugins.lock
 
@@ -224,19 +252,34 @@ This makes mpm suitable for use in CI/CD pipelines and scripts.
 ### Basic Workflow
 
 ```bash
-# Initialize
-mpm init
+# Initialize with your Minecraft version
+mpm init 1.20.1
 
 # Add plugins from different sources
+# Compatibility is automatically checked
 mpm add fabric-api                    # Modrinth (default)
 mpm add hangar:GeyserMC/Geyser       # Hangar
-mpm add github:PaperMC/Paper         # GitHub Releases
+mpm add github:PaperMC/Paper         # GitHub Releases (warning shown)
 
 # Sync (downloads plugins)
 mpm sync
 
 # Check health
 mpm doctor
+```
+
+### Version Compatibility Example
+
+```bash
+# Initialize for Minecraft 1.20.1
+mpm init 1.20.1
+
+# Add a plugin - compatibility is checked automatically
+mpm add worldedit@7.3.0              # ✅ Success (compatible with 1.20.1)
+
+# Try adding incompatible version
+mpm add some-plugin@latest          # ❌ Error if not compatible with 1.20.1
+# Error: No versions of plugin 'some-plugin' are compatible with Minecraft 1.20.1
 ```
 
 ### CI/CD Integration
