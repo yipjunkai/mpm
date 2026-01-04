@@ -19,6 +19,10 @@ mpm is a native Rust-based CLI for Minecraft servers. It brings modern DevOps pr
 ## 🚀 Coming Soon (In no particular order)
 
 - [ ] **SpigotMC Integration:** Support for downloading plugins from SpigotMC's plugin repository with Minecraft version compatibility checking.
+- [ ] **Bukkit Integration:** Support for downloading plugins from the Bukkit plugin repository.
+- [ ] **Polymart Integration:** Support for downloading plugins from the Polymart plugin marketplace.
+- [ ] **CurseForge Integration:** Support for downloading plugins and mods from CurseForge.
+- [ ] **Custom URLs:** Support for direct plugin downloads from custom URLs.
 - [ ] **Hosting Panel Integration:** Native support for Pterodactyl and WINGS for seamless, one-click managed deployments.
 - [ ] **Expanded Sources:** Support for custom repositories, private mirrors, and direct Jenkins/CI build artifacts.
 - [ ] **Version Range Support:** Support for version ranges (e.g., `>=1.20.0,<1.21.0`) in compatibility checking.
@@ -135,12 +139,11 @@ This ensures you only add plugins that will work with your server version.
 
 **Supported sources:**
 
-| Source     | Description                          | Format                                    | MC Version Check | Status         |
-| ---------- | ------------------------------------ | ----------------------------------------- | ---------------- | -------------- |
-| `modrinth` | Modrinth plugin repository (default) | `plugin-id` or `plugin-id@version`        | ✅ Yes           | ✅ Available   |
-| `hangar`   | Hangar (PaperMC plugin repository)   | `author/slug` or `author/slug@version`    | ✅ Yes           | ✅ Available   |
-| `github`   | GitHub Releases                      | `owner/repo` or `owner/repo@tag`          | ⚠️ Warning only  | ✅ Available   |
-| `spigotmc` | SpigotMC plugin repository           | `resource-id` or `resource-id@version-id` | 🚧 Coming soon   | 🚧 In Progress |
+| Source     | Description                          | Format                                 | MC Version Check | Status       |
+| ---------- | ------------------------------------ | -------------------------------------- | ---------------- | ------------ |
+| `modrinth` | Modrinth plugin repository (default) | `plugin-id` or `plugin-id@version`     | ✅ Yes           | ✅ Available |
+| `hangar`   | Hangar (PaperMC plugin repository)   | `author/slug` or `author/slug@version` | ✅ Yes           | ✅ Available |
+| `github`   | GitHub Releases                      | `owner/repo` or `owner/repo@tag`       | ⚠️ Warning only  | ✅ Available |
 
 **Note:** GitHub Releases don't include Minecraft version metadata, so compatibility cannot be automatically verified. A warning will be displayed when adding GitHub plugins.
 
