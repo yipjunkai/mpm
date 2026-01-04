@@ -22,7 +22,7 @@ struct PluginYml {
     version: Option<String>,
 }
 
-pub async fn import_plugins(version: String) -> anyhow::Result<()> {
+pub async fn import_plugins(version: Option<String>) -> anyhow::Result<()> {
     // Check if plugins.toml already exists
     if Manifest::load().is_ok() {
         anyhow::bail!(
@@ -30,6 +30,30 @@ pub async fn import_plugins(version: String) -> anyhow::Result<()> {
             constants::MANIFEST_FILE
         );
     }
+
+    // Determine which version to use
+    let final_version = if let Some(v) = version {
+        // User provided version explicitly, use it
+        v
+    } else {
+        // Try to detect from Paper JAR
+        match detect_minecraft_version_from_paper_jar() {
+            Some(detected_version) => {
+                info!(
+                    "Auto-detected Minecraft version {} from Paper JAR",
+                    detected_version
+                );
+                detected_version
+            }
+            None => {
+                warn!(
+                    "Could not detect Minecraft version from Paper JAR, using default: {}",
+                    constants::DEFAULT_MC_VERSION
+                );
+                constants::DEFAULT_MC_VERSION.to_string()
+            }
+        }
+    };
 
     let plugins_dir = config::plugins_dir();
     let plugins_path = Path::new(&plugins_dir);
@@ -52,7 +76,7 @@ pub async fn import_plugins(version: String) -> anyhow::Result<()> {
         // Create empty manifest and lockfile
         let manifest = Manifest {
             minecraft: MinecraftSpec {
-                version: version.clone(),
+                version: final_version.clone(),
             },
             plugins: BTreeMap::new(),
         };
@@ -70,7 +94,7 @@ pub async fn import_plugins(version: String) -> anyhow::Result<()> {
     }
 
     // Search for sources for each plugin
-    let minecraft_version = Some(version.as_str());
+    let minecraft_version = Some(final_version.as_str());
     let mut manifest_plugins = BTreeMap::new();
     let mut lockfile_plugins = Vec::new();
 
@@ -131,7 +155,7 @@ pub async fn import_plugins(version: String) -> anyhow::Result<()> {
 
     let manifest = Manifest {
         minecraft: MinecraftSpec {
-            version: version.clone(),
+            version: final_version.clone(),
         },
         plugins: manifest_plugins,
     };
@@ -377,4 +401,190 @@ fn compute_sha256(file_path: &Path) -> anyhow::Result<String> {
     hasher.update(&data);
     let hash_hex = hex::encode(hasher.finalize());
     Ok(format!("sha256:{}", hash_hex))
+}
+
+/// Detect Minecraft version from Paper JAR file in the configuration directory
+/// Returns None if no Paper JAR is found or version cannot be extracted
+pub fn detect_minecraft_version_from_paper_jar() -> Option<String> {
+    let config_dir = config::config_dir();
+    let config_path = Path::new(&config_dir);
+
+    if !config_path.exists() {
+        debug!("Config directory does not exist: {}", config_dir);
+        return None;
+    }
+
+    // Search for Paper JAR files (paper-*.jar or papermc-*.jar)
+    let entries = match fs::read_dir(config_path) {
+        Ok(entries) => entries,
+        Err(e) => {
+            debug!("Failed to read config directory {}: {}", config_dir, e);
+            return None;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let filename = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+
+        // Check if it's a Paper JAR file
+        if !filename.ends_with(".jar") {
+            continue;
+        }
+
+        let filename_lower = filename.to_lowercase();
+        if !filename_lower.starts_with("paper") {
+            continue;
+        }
+
+        debug!("Found potential Paper JAR: {}", filename);
+
+        // Try to extract version from filename first (e.g., paper-1.20.6-150.jar -> 1.20.6)
+        if let Some(version) = extract_version_from_filename(filename) {
+            debug!("Extracted version from filename: {}", version);
+            return Some(version);
+        }
+
+        // Try to read from MANIFEST.MF
+        if let Some(version) = extract_version_from_manifest(&path) {
+            debug!("Extracted version from MANIFEST.MF: {}", version);
+            return Some(version);
+        }
+    }
+
+    debug!("No Paper JAR found or version could not be extracted");
+    None
+}
+
+/// Extract Minecraft version from Paper JAR filename
+/// Patterns:
+///   - paper-{version}-{build}.jar (e.g., paper-1.20.6-150.jar -> 1.20.6)
+///   - paper-{version}.jar (e.g., paper-1.20.6.jar -> 1.20.6)
+fn extract_version_from_filename(filename: &str) -> Option<String> {
+    // Remove .jar extension
+    let name = filename.strip_suffix(".jar")?;
+
+    // Pattern: paper-{version}-{build} or papermc-{version}-{build} or paper-{version}
+    // We want to extract the version part
+    let parts: Vec<&str> = name.split('-').collect();
+
+    // Need at least 2 parts: paper, version (build number is optional)
+    if parts.len() < 2 {
+        return None;
+    }
+
+    // If we have 3+ parts, assume the last part is a build number
+    // Otherwise, everything after "paper" is the version
+    let version_parts = if parts.len() >= 3 {
+        // Skip the first part (paper/papermc) and last part (build number)
+        // Join the middle parts as version (e.g., "1.20.6")
+        &parts[1..parts.len() - 1]
+    } else {
+        // No build number, everything after "paper" is the version
+        &parts[1..]
+    };
+
+    let version = version_parts.join(".");
+
+    // Validate it looks like a version
+    if version.is_empty() {
+        return None;
+    }
+
+    // Basic validation: should start with a digit
+    if !version.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(version)
+}
+
+/// Extract Minecraft version from JAR MANIFEST.MF file
+fn extract_version_from_manifest(jar_path: &Path) -> Option<String> {
+    use std::io::Read;
+
+    let file = match fs::File::open(jar_path) {
+        Ok(f) => f,
+        Err(e) => {
+            debug!("Failed to open JAR file {:?}: {}", jar_path, e);
+            return None;
+        }
+    };
+
+    let mut archive = match zip::ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(e) => {
+            debug!("Failed to open JAR archive {:?}: {}", jar_path, e);
+            return None;
+        }
+    };
+
+    let mut manifest = match archive.by_name("META-INF/MANIFEST.MF") {
+        Ok(m) => m,
+        Err(e) => {
+            debug!("Failed to read MANIFEST.MF from {:?}: {}", jar_path, e);
+            return None;
+        }
+    };
+
+    let mut contents = String::new();
+    if manifest.read_to_string(&mut contents).is_err() {
+        debug!("Failed to read MANIFEST.MF contents from {:?}", jar_path);
+        return None;
+    }
+
+    // Parse manifest file (simple key-value format)
+    // Look for Implementation-Version or Specification-Version
+    for line in contents.lines() {
+        let line = line.trim();
+
+        // Skip continuation lines (start with space)
+        if line.starts_with(' ') {
+            continue;
+        }
+
+        // Look for version-related keys
+        if let Some(version) = line.strip_prefix("Implementation-Version:") {
+            let version = version.trim();
+            if !version.is_empty() {
+                // Try to normalize version (remove build metadata like -R0.1-SNAPSHOT)
+                let normalized = version
+                    .split('-')
+                    .next()
+                    .unwrap_or(version)
+                    .trim()
+                    .to_string();
+                if !normalized.is_empty() {
+                    return Some(normalized);
+                }
+            }
+        } else if let Some(version) = line.strip_prefix("Specification-Version:") {
+            let version = version.trim();
+            if !version.is_empty() {
+                let normalized = version
+                    .split('-')
+                    .next()
+                    .unwrap_or(version)
+                    .trim()
+                    .to_string();
+                if !normalized.is_empty() {
+                    return Some(normalized);
+                }
+            }
+        }
+    }
+
+    None
 }

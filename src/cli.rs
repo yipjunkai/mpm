@@ -1,6 +1,5 @@
 // CLI module for handling command-line interface
 
-use crate::constants;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -27,10 +26,12 @@ pub enum Commands {
     ///
     /// Creates a plugins.toml file in the current directory (or PM_DIR if set).
     /// This is the first step to start managing plugins with mpm.
+    ///
+    /// If no version is provided, attempts to auto-detect from Paper JAR file.
+    /// Falls back to default version if detection fails.
     Init {
-        /// Minecraft version (e.g., 1.20.2)
-        #[arg(default_value = constants::DEFAULT_MC_VERSION)]
-        version: String,
+        /// Minecraft version (e.g., 1.20.2). If not provided, attempts auto-detection from Paper JAR.
+        version: Option<String>,
     },
     /// Add a plugin to the manifest
     ///
@@ -106,9 +107,12 @@ pub enum Commands {
     /// with a warning.
     ///
     /// This command requires that plugins.toml does not already exist.
+    ///
+    /// If no version is provided, attempts to auto-detect from Paper JAR file.
+    /// Falls back to default version if detection fails.
     Import {
-        /// Minecraft version (e.g., 1.20.2)
-        #[arg(long, default_value = constants::DEFAULT_MC_VERSION)]
-        version: String,
+        /// Minecraft version (e.g., 1.20.2). If not provided, attempts auto-detection from Paper JAR.
+        #[arg(long)]
+        version: Option<String>,
     },
 }
