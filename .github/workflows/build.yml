@@ -81,8 +81,8 @@ jobs:
         run: |
           cd release-artifact
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows: use PowerShell Compress-Archive
-            Compress-Archive -Path release-artifact\* -DestinationPath ${{ matrix.asset_name }}${{ matrix.archive_ext }} -Force
+            # Windows: use 7zip
+            7z a ../${{ matrix.asset_name }}${{ matrix.archive_ext }} *
           else
             # Linux/macOS: use tar
             tar -czf ../${{ matrix.asset_name }}${{ matrix.archive_ext }} *
