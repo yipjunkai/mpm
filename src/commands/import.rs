@@ -68,29 +68,45 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     let mut manifest_plugins = BTreeMap::new();
     let mut lockfile_plugins = Vec::new();
 
+    let mut skipped_plugins = Vec::new();
     for (name, filename, version_option, hash) in &plugins {
-        // Try to find the plugin in sources
-        let (source, plugin_id) =
-            find_plugin_source(name, version_option.as_deref(), minecraft_version).await;
+        // Try to find the plugin in sources using search functionality
+        match find_plugin_source(name, version_option.as_deref(), minecraft_version).await {
+            Some((source, plugin_id)) => {
+                manifest_plugins.insert(
+                    name.clone(),
+                    PluginSpec {
+                        source: source.clone(),
+                        id: plugin_id.clone(),
+                        version: version_option.clone(),
+                    },
+                );
 
-        manifest_plugins.insert(
-            name.clone(),
-            PluginSpec {
-                source: source.clone(),
-                id: plugin_id.clone(),
-                version: version_option.clone(),
-            },
-        );
-
-        lockfile_plugins.push(LockedPlugin {
-            name: name.clone(),
-            source,
-            version: version_option.clone().unwrap_or_else(|| filename.clone()),
-            file: filename.clone(),
-            url: "unknown://".to_string(),
-            hash: hash.clone(),
-        });
+                // Add to lockfile with local file info
+                // The URL and hash will be updated when user runs 'lock' command
+                // We use the local file hash for now to maintain integrity
+                let source_clone = source.clone();
+                lockfile_plugins.push(LockedPlugin {
+                    name: name.clone(),
+                    source,
+                    version: version_option.clone().unwrap_or_else(|| filename.clone()),
+                    file: filename.clone(),
+                    url: format!("{}://{}", source_clone, plugin_id), // Placeholder, will be resolved during lock
+                    hash: hash.clone(), // Local file hash, will be updated during lock
+                });
+            }
+            None => {
+                // Plugin not found in any source - skip it with a warning
+                skipped_plugins.push((name.clone(), filename.clone()));
+                eprintln!(
+                    "Warning: Plugin '{}' ({}) not found in any source, skipping",
+                    name, filename
+                );
+            }
+        }
     }
+
+    let imported_count = manifest_plugins.len();
 
     let manifest = Manifest {
         minecraft: MinecraftSpec {
@@ -112,17 +128,16 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     manifest.save()?;
     lockfile.save()?;
 
-    println!("Imported {} plugin(s)", plugins.len());
+    println!("Imported {} plugin(s)", imported_count);
+    if !skipped_plugins.is_empty() {
+        println!(
+            "Skipped {} plugin(s) not found in any source",
+            skipped_plugins.len()
+        );
+    }
     for (name, filename, _, _) in &plugins {
-        let source = manifest
-            .plugins
-            .get(name)
-            .map(|spec| spec.source.as_str())
-            .unwrap_or("unknown");
-        if source == "unknown" {
-            println!("  → {} ({}) - source: unknown", name, filename);
-        } else {
-            println!("  → {} ({}) - source: {}", name, filename, source);
+        if let Some(spec) = manifest.plugins.get(name) {
+            println!("  → {} ({}) - source: {}", name, filename, spec.source);
         }
     }
 
@@ -130,18 +145,18 @@ pub async fn import_plugins() -> anyhow::Result<()> {
 }
 
 /// Search for a plugin across all sources in priority order
-/// Returns (source_name, plugin_id)
+/// Returns Some((source_name, plugin_id)) if found, None otherwise
 async fn find_plugin_source(
     plugin_name: &str,
     version: Option<&str>,
     minecraft_version: Option<&str>,
-) -> (String, String) {
+) -> Option<(String, String)> {
     let sources = REGISTRY.get_priority_order();
 
     for source_impl in sources {
         let source_name = source_impl.name();
 
-        // Try the plugin name as-is first
+        // Try the plugin name as-is first (this will use search for Hangar/GitHub if needed)
         if source_impl.validate_plugin_id(plugin_name).is_ok() {
             match source_impl
                 .resolve_version(plugin_name, version, minecraft_version)
@@ -149,7 +164,7 @@ async fn find_plugin_source(
             {
                 Ok(_) => {
                     // Found it!
-                    return (source_name.to_string(), plugin_name.to_string());
+                    return Some((source_name.to_string(), plugin_name.to_string()));
                 }
                 Err(_) => {
                     // Continue searching
@@ -157,10 +172,7 @@ async fn find_plugin_source(
             }
         }
 
-        // For Hangar and GitHub, try some common transformations
-        // Hangar format: author/slug, so if name doesn't have /, skip
-        // GitHub format: owner/repo, so if name doesn't have /, skip
-        // Modrinth: try lowercase version
+        // For Modrinth, try lowercase version
         if source_name == "modrinth" {
             let lowercase_name = plugin_name.to_lowercase();
             if lowercase_name != plugin_name
@@ -171,7 +183,7 @@ async fn find_plugin_source(
                     .await
                 {
                     Ok(_) => {
-                        return (source_name.to_string(), lowercase_name);
+                        return Some((source_name.to_string(), lowercase_name));
                     }
                     Err(_) => {
                         // Continue searching
@@ -182,7 +194,7 @@ async fn find_plugin_source(
     }
 
     // Not found in any source
-    ("unknown".to_string(), plugin_name.to_string())
+    None
 }
 
 fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<ScannedPlugin>> {

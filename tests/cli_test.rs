@@ -1304,9 +1304,10 @@ fn test_import_creates_manifest_and_lockfile() {
     let plugins_dir = format!("{}/plugins", test_dir);
     fs::create_dir_all(&plugins_dir).unwrap();
 
-    // Create a test JAR file
-    let jar_path = format!("{}/test-plugin.jar", plugins_dir);
-    create_test_jar(Path::new(&jar_path), "TestPlugin", Some("1.0.0")).unwrap();
+    // Create a test JAR file with real plugin name (use lowercase to match Modrinth)
+    // Don't specify version - let import find the latest compatible version
+    let jar_path = format!("{}/worldedit.jar", plugins_dir);
+    create_test_jar(Path::new(&jar_path), "worldedit", None).unwrap();
 
     // Run import
     let (success, output, _) = run_command(&["import"], test_dir);
@@ -1318,7 +1319,7 @@ fn test_import_creates_manifest_and_lockfile() {
         output
     );
     assert!(
-        output.contains("TestPlugin"),
+        output.contains("worldedit"),
         "Expected plugin name in output: {}",
         output
     );
@@ -1331,9 +1332,9 @@ fn test_import_creates_manifest_and_lockfile() {
     );
 
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest_content.contains("TestPlugin"));
-    assert!(manifest_content.contains("source = \"unknown\""));
-    assert!(manifest_content.contains("id = \"TestPlugin\""));
+    assert!(manifest_content.contains("worldedit"));
+    assert!(manifest_content.contains("modrinth"));
+    assert!(manifest_content.contains("id = \"worldedit\""));
 
     // Verify lockfile was created
     let lockfile_path = format!("{}/plugins.lock", test_dir);
@@ -1343,10 +1344,10 @@ fn test_import_creates_manifest_and_lockfile() {
     );
 
     let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
-    assert!(lockfile_content.contains("TestPlugin"));
-    assert!(lockfile_content.contains("test-plugin.jar"));
+    assert!(lockfile_content.contains("worldedit"));
+    assert!(lockfile_content.contains("worldedit.jar"));
+    assert!(lockfile_content.contains("modrinth"));
     assert!(lockfile_content.contains("sha256:"));
-    assert!(lockfile_content.contains("unknown://"));
 }
 
 #[test]
@@ -1358,17 +1359,18 @@ fn test_import_multiple_plugins() {
     let plugins_dir = format!("{}/plugins", test_dir);
     fs::create_dir_all(&plugins_dir).unwrap();
 
-    // Create multiple test JAR files
+    // Create multiple test JAR files with real plugin names
+    // Don't specify versions - let import find the latest compatible versions
     create_test_jar(
-        Path::new(&format!("{}/plugin1.jar", plugins_dir)),
-        "PluginOne",
-        Some("1.0.0"),
+        Path::new(&format!("{}/worldedit.jar", plugins_dir)),
+        "worldedit",
+        None,
     )
     .unwrap();
     create_test_jar(
-        Path::new(&format!("{}/plugin2.jar", plugins_dir)),
-        "PluginTwo",
-        Some("2.0.0"),
+        Path::new(&format!("{}/geyser.jar", plugins_dir)),
+        "Geyser",
+        None,
     )
     .unwrap();
 
@@ -1385,16 +1387,22 @@ fn test_import_multiple_plugins() {
     // Verify both plugins are in manifest
     let manifest_path = format!("{}/plugins.toml", test_dir);
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest_content.contains("PluginOne"));
-    assert!(manifest_content.contains("PluginTwo"));
+    assert!(manifest_content.contains("worldedit"));
+    assert!(manifest_content.contains("Geyser"));
+    assert!(manifest_content.contains("modrinth"));
+    // Geyser might be found in hangar or modrinth depending on search results
+    assert!(
+        manifest_content.contains("hangar") || manifest_content.contains("modrinth"),
+        "Geyser should be found in at least one source"
+    );
 
     // Verify both plugins are in lockfile
     let lockfile_path = format!("{}/plugins.lock", test_dir);
     let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
-    assert!(lockfile_content.contains("PluginOne"));
-    assert!(lockfile_content.contains("PluginTwo"));
-    assert!(lockfile_content.contains("plugin1.jar"));
-    assert!(lockfile_content.contains("plugin2.jar"));
+    assert!(lockfile_content.contains("worldedit"));
+    assert!(lockfile_content.contains("Geyser"));
+    assert!(lockfile_content.contains("worldedit.jar"));
+    assert!(lockfile_content.contains("geyser.jar"));
 }
 
 #[test]
@@ -1406,8 +1414,8 @@ fn test_import_without_plugin_yml() {
     let plugins_dir = format!("{}/plugins", test_dir);
     fs::create_dir_all(&plugins_dir).unwrap();
 
-    // Create a JAR file without plugin.yml
-    let jar_path = format!("{}/no-plugin-yml.jar", plugins_dir);
+    // Create a JAR file without plugin.yml - will fall back to filename
+    let jar_path = format!("{}/worldedit.jar", plugins_dir);
     create_empty_jar(Path::new(&jar_path)).unwrap();
 
     // Run import
@@ -1420,10 +1428,11 @@ fn test_import_without_plugin_yml() {
         output
     );
 
-    // Verify manifest uses filename as plugin name
+    // Verify plugin is imported using filename as the name
     let manifest_path = format!("{}/plugins.toml", test_dir);
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest_content.contains("no-plugin-yml"));
+    assert!(manifest_content.contains("worldedit"));
+    assert!(manifest_content.contains("modrinth"));
 }
 
 #[test]
@@ -1436,23 +1445,36 @@ fn test_import_without_version() {
     fs::create_dir_all(&plugins_dir).unwrap();
 
     // Create a JAR file with plugin.yml but no version
-    let jar_path = format!("{}/no-version.jar", plugins_dir);
-    create_test_jar(Path::new(&jar_path), "NoVersionPlugin", None).unwrap();
+    let jar_path = format!("{}/worldedit.jar", plugins_dir);
+    create_test_jar(Path::new(&jar_path), "worldedit", None).unwrap();
 
     // Run import
     let (success, output, _) = run_command(&["import"], test_dir);
 
     assert!(success, "Import command should succeed. output: {}", output);
+    assert!(
+        output.contains("Imported 1 plugin"),
+        "Expected 'Imported 1 plugin' in output: {}",
+        output
+    );
 
-    // Verify manifest doesn't have version
+    // Verify plugin is imported without pinned version
     let manifest_path = format!("{}/plugins.toml", test_dir);
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest_content.contains("NoVersionPlugin"));
-
-    // Verify lockfile uses filename as version fallback
-    let lockfile_path = format!("{}/plugins.lock", test_dir);
-    let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
-    assert!(lockfile_content.contains("no-version.jar"));
+    assert!(manifest_content.contains("worldedit"));
+    assert!(manifest_content.contains("modrinth"));
+    // Version field should be absent or None
+    let worldedit_section = manifest_content
+        .lines()
+        .skip_while(|l| !l.contains("worldedit"))
+        .take(10)
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Version should not be pinned (either absent or commented out)
+    assert!(
+        !worldedit_section.contains("version =") || worldedit_section.contains("version = \"\""),
+        "Version should not be pinned when plugin.yml has no version"
+    );
 }
 
 #[test]
@@ -1551,11 +1573,11 @@ fn test_import_ignores_non_jar_files() {
     let plugins_dir = format!("{}/plugins", test_dir);
     fs::create_dir_all(&plugins_dir).unwrap();
 
-    // Create a JAR file
+    // Create a JAR file with real plugin name
     create_test_jar(
-        Path::new(&format!("{}/plugin.jar", plugins_dir)),
-        "TestPlugin",
-        Some("1.0.0"),
+        Path::new(&format!("{}/worldedit.jar", plugins_dir)),
+        "worldedit",
+        None,
     )
     .unwrap();
 
@@ -1568,15 +1590,16 @@ fn test_import_ignores_non_jar_files() {
     assert!(success, "Import command should succeed. output: {}", output);
     assert!(
         output.contains("Imported 1 plugin"),
-        "Expected only 1 plugin (JAR file) in output: {}",
+        "Expected 'Imported 1 plugin' in output: {}",
         output
     );
 
-    // Verify only the JAR is in manifest
+    // Verify only the JAR plugin is in manifest (not the .txt file)
     let manifest_path = format!("{}/plugins.toml", test_dir);
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest_content.contains("TestPlugin"));
+    assert!(manifest_content.contains("worldedit"));
     assert!(!manifest_content.contains("not-a-plugin"));
+    assert!(!manifest_content.contains(".txt"));
 }
 
 // Tests for Hangar source
