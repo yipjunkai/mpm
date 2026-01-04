@@ -191,10 +191,24 @@ async fn find_plugin_source(
 
         // Try the plugin name as-is first (this will use search for Hangar/GitHub if needed)
         if source_impl.validate_plugin_id(plugin_name).is_ok() {
-            match source_impl
+            // First try with the exact version from plugin.yml if provided
+            let mut resolved = source_impl
                 .resolve_version(plugin_name, version, minecraft_version)
-                .await
-            {
+                .await;
+
+            // If exact version failed and we have both a version and minecraft_version,
+            // try again without the version constraint to find the latest compatible version
+            if resolved.is_err() && version.is_some() && minecraft_version.is_some() {
+                debug!(
+                    "Exact version not compatible, trying latest compatible version: plugin={}, source={}",
+                    plugin_name, source_name
+                );
+                resolved = source_impl
+                    .resolve_version(plugin_name, None, minecraft_version)
+                    .await;
+            }
+
+            match resolved {
                 Ok(_) => {
                     debug!(
                         "Plugin found in source: plugin={}, source={}",
@@ -225,10 +239,24 @@ async fn find_plugin_source(
                     plugin_name, lowercase_name
                 );
 
-                match source_impl
+                // First try with the exact version from plugin.yml if provided
+                let mut resolved = source_impl
                     .resolve_version(&lowercase_name, version, minecraft_version)
-                    .await
-                {
+                    .await;
+
+                // If exact version failed and we have both a version and minecraft_version,
+                // try again without the version constraint to find the latest compatible version
+                if resolved.is_err() && version.is_some() && minecraft_version.is_some() {
+                    debug!(
+                        "Exact version not compatible (lowercase), trying latest compatible version: plugin={}, lowercase={}, source={}",
+                        plugin_name, lowercase_name, source_name
+                    );
+                    resolved = source_impl
+                        .resolve_version(&lowercase_name, None, minecraft_version)
+                        .await;
+                }
+
+                match resolved {
                     Ok(_) => {
                         debug!(
                             "Plugin found (lowercase variant): plugin={}, lowercase={}, source={}",
