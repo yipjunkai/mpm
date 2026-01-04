@@ -1470,9 +1470,9 @@ fn test_import_without_version() {
         .take(10)
         .collect::<Vec<_>>()
         .join("\n");
-    // Version should not be pinned (either absent or commented out)
+    // Version should not be pinned
     assert!(
-        !worldedit_section.contains("version =") || worldedit_section.contains("version = \"\""),
+        !worldedit_section.contains("version ="),
         "Version should not be pinned when plugin.yml has no version"
     );
 }
