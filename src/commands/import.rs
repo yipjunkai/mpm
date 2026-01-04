@@ -22,7 +22,7 @@ struct PluginYml {
     version: Option<String>,
 }
 
-pub async fn import_plugins() -> anyhow::Result<()> {
+pub async fn import_plugins(version: String) -> anyhow::Result<()> {
     // Check if plugins.toml already exists
     if Manifest::load().is_ok() {
         anyhow::bail!(
@@ -52,7 +52,7 @@ pub async fn import_plugins() -> anyhow::Result<()> {
         // Create empty manifest and lockfile
         let manifest = Manifest {
             minecraft: MinecraftSpec {
-                version: constants::DEFAULT_MC_VERSION.to_string(), // Default version
+                version: version.clone(),
             },
             plugins: BTreeMap::new(),
         };
@@ -70,7 +70,7 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     }
 
     // Search for sources for each plugin
-    let minecraft_version = Some(constants::DEFAULT_MC_VERSION);
+    let minecraft_version = Some(version.as_str());
     let mut manifest_plugins = BTreeMap::new();
     let mut lockfile_plugins = Vec::new();
 
@@ -131,7 +131,7 @@ pub async fn import_plugins() -> anyhow::Result<()> {
 
     let manifest = Manifest {
         minecraft: MinecraftSpec {
-            version: constants::DEFAULT_MC_VERSION.to_string(), // Default version, could be detected later
+            version: version.clone(),
         },
         plugins: manifest_plugins,
     };

@@ -63,8 +63,8 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(2);
             }
         },
-        Some(cli::Commands::Import) => {
-            commands::import::import_plugins().await?;
+        Some(cli::Commands::Import { version }) => {
+            commands::import::import_plugins(version).await?;
         }
         None => {
             // This case should not be reached due to arg_required_else_help,

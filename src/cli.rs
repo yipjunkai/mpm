@@ -106,5 +106,9 @@ pub enum Commands {
     /// with a warning.
     ///
     /// This command requires that plugins.toml does not already exist.
-    Import,
+    Import {
+        /// Minecraft version (e.g., 1.20.2)
+        #[arg(long, default_value = constants::DEFAULT_MC_VERSION)]
+        version: String,
+    },
 }
