@@ -13,6 +13,10 @@ use clap::{Parser, Subcommand};
 #[command(version)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
+    /// Enable debug logging
+    #[arg(long, global = true)]
+    pub debug: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -96,7 +100,10 @@ pub enum Commands {
     ///
     /// Scans the plugins directory for JAR files, reads plugin.yml from each,
     /// computes SHA-256 hashes, and generates plugins.toml and plugins.lock.
-    /// Plugins are marked with source "unknown" since they weren't installed via mpm.
+    /// Attempts to identify each plugin by searching across all sources (Modrinth,
+    /// Hangar, GitHub) in priority order. Plugins found in sources are added with
+    /// their proper source and ID. Plugins not found in any source are skipped
+    /// with a warning.
     ///
     /// This command requires that plugins.toml does not already exist.
     Import,

@@ -2,6 +2,7 @@
 
 use crate::commands::lock;
 use crate::manifest::Manifest;
+use log::info;
 
 pub async fn remove(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Load existing manifest
@@ -11,7 +12,7 @@ pub async fn remove(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Remove plugin from manifest
     if manifest.plugins.remove(&spec).is_some() {
         manifest.save()?;
-        println!("Removed plugin '{}'", spec);
+        info!("Removed plugin '{}'", spec);
 
         // Automatically lock after removing unless --no-update is specified
         if !no_update {

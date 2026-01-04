@@ -5,6 +5,7 @@ use crate::config;
 use crate::constants;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
+use log::info;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -53,6 +54,7 @@ struct DoctorOutput {
     issues: Vec<Issue>,
 }
 
+#[allow(clippy::print_stdout)]
 pub fn check_health(json: bool) -> anyhow::Result<i32> {
     let manifest_path = config::manifest_path();
     let lockfile_path = config::lockfile_path();
@@ -111,7 +113,7 @@ pub fn check_health(json: bool) -> anyhow::Result<i32> {
     };
 
     if json {
-        // Output JSON
+        // Output JSON (use println! for structured output)
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         // Output human-readable format
@@ -323,56 +325,56 @@ fn check_plugins(plugins_dir: &str, lockfile: &Lockfile) -> (PluginsInfo, Vec<Is
 
 fn output_human_readable(output: &DoctorOutput) {
     // 1. Manifest section
-    println!("Manifest (plugins.toml)");
+    info!("Manifest (plugins.toml)");
     if output.manifest.present && output.manifest.valid {
-        println!("  ✓ Present and valid");
+        info!("  ✓ Present and valid");
     } else if output.manifest.present {
-        println!("  ✗ Present but invalid");
+        info!("  ✗ Present but invalid");
     } else {
-        println!("  ✗ Not found");
+        info!("  ✗ Not found");
     }
 
     // 2. Lockfile section
-    println!("\nLockfile (plugins.lock)");
+    info!("\nLockfile (plugins.lock)");
     if output.lockfile.present && output.lockfile.valid {
-        println!("  ✓ Present and valid");
+        info!("  ✓ Present and valid");
     } else if output.lockfile.present {
-        println!("  ✗ Present but invalid");
+        info!("  ✗ Present but invalid");
     } else {
-        println!("  ✗ Not found");
+        info!("  ✗ Not found");
     }
 
     // 3. Plugins directory section
     let plugins_dir_path = config::plugins_dir();
-    println!("\nPlugins directory ({})", plugins_dir_path);
+    info!("\nPlugins directory ({})", plugins_dir_path);
     if output.plugins.directory_present {
-        println!("  ✓ Directory exists");
-        println!(
+        info!("  ✓ Directory exists");
+        info!(
             "  Installed: {} / Expected: {}",
             output.plugins.installed, output.plugins.expected
         );
 
         if !output.plugins.missing.is_empty() {
             for plugin_name in &output.plugins.missing {
-                println!("  ✗ Missing: {}", plugin_name);
+                info!("  ✗ Missing: {}", plugin_name);
             }
         }
         if !output.plugins.hash_mismatch.is_empty() {
             for plugin_name in &output.plugins.hash_mismatch {
-                println!("  ✗ Hash mismatch: {}", plugin_name);
+                info!("  ✗ Hash mismatch: {}", plugin_name);
             }
         }
         if !output.plugins.unmanaged.is_empty() {
             for filename in &output.plugins.unmanaged {
-                println!("  ⚠ Unmanaged: {}", filename);
+                info!("  ⚠ Unmanaged: {}", filename);
             }
         }
     } else {
-        println!("  ✗ Directory not found");
+        info!("  ✗ Directory not found");
     }
 
     // 4. Summary
-    println!("\nSummary");
+    info!("\nSummary");
     let error_count = output
         .issues
         .iter()
@@ -385,13 +387,13 @@ fn output_human_readable(output: &DoctorOutput) {
         .count();
 
     if error_count > 0 {
-        println!("  ✗ {} error(s)", error_count);
+        info!("  ✗ {} error(s)", error_count);
     }
     if warning_count > 0 {
-        println!("  ⚠ {} warning(s)", warning_count);
+        info!("  ⚠ {} warning(s)", warning_count);
     }
     if error_count == 0 && warning_count == 0 {
-        println!("  ✓ No issues");
+        info!("  ✓ No issues");
     }
 
     // Status line
@@ -400,5 +402,5 @@ fn output_human_readable(output: &DoctorOutput) {
         "warning" => "warnings",
         _ => "healthy",
     };
-    println!("\nStatus: {}", status_label);
+    info!("\nStatus: {}", status_label);
 }

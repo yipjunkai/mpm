@@ -2,6 +2,7 @@
 
 use crate::sources::source_trait::{PluginSource, ResolvedVersion};
 use async_trait::async_trait;
+use log::warn;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -68,8 +69,8 @@ impl PluginSource for GitHubSource {
         // GitHub Releases don't have built-in Minecraft version metadata
         // We cannot validate compatibility, so warn the user if a Minecraft version is specified
         if minecraft_version.is_some() {
-            eprintln!(
-                "Warning: GitHub source does not support Minecraft version filtering. \
+            warn!(
+                "GitHub source does not support Minecraft version filtering. \
                 Compatibility cannot be verified for plugin '{}'.",
                 plugin_id
             );

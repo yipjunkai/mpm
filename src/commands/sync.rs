@@ -2,6 +2,7 @@
 
 use crate::config;
 use crate::lockfile::{LockedPlugin, Lockfile};
+use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::path::Path;
@@ -16,7 +17,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     let lockfile = match Lockfile::load() {
         Ok(lockfile) => lockfile,
         Err(_) => {
-            eprintln!("Error: Lockfile not found. Run 'pm lock' first.");
+            error!("Lockfile not found. Run 'pm lock' first.");
             return Ok(2);
         }
     };
@@ -24,7 +25,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     let plugins_dir = config::plugins_dir();
 
     if dry_run {
-        println!("[DRY RUN] Previewing sync changes...");
+        info!("[DRY RUN] Previewing sync changes...");
     }
 
     let staging_dir = format!("{}/.plugins.staging", plugins_dir);
@@ -32,13 +33,13 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
 
     // Clean up any leftover staging/backup directories
     if !dry_run && let Err(e) = cleanup_temp_dirs(&plugins_dir) {
-        eprintln!("Error: Failed to cleanup temp directories: {}", e);
+        error!("Failed to cleanup temp directories: {}", e);
         return Ok(2);
     }
 
     // Create staging directory
     if !dry_run && let Err(e) = fs::create_dir_all(&staging_dir) {
-        eprintln!("Error: Failed to create staging directory: {}", e);
+        error!("Failed to create staging directory: {}", e);
         return Ok(2);
     }
 
@@ -47,7 +48,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         match create_backup(&plugins_dir, &backup_dir) {
             Ok(created) => created,
             Err(e) => {
-                eprintln!("Error: Failed to create backup: {}", e);
+                error!("Failed to create backup: {}", e);
                 return Ok(2);
             }
         }
@@ -78,7 +79,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
                 if let Ok(existing_hash) = verify_plugin_hash(&target_path, algorithm)
                     && existing_hash == plugin.hash
                 {
-                    println!("  ✓ {} (already synced)", plugin.name);
+                    debug!("  ✓ {} (already synced)", plugin.name);
                     continue;
                 }
             }
@@ -92,12 +93,12 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         // Download files that need updating
         for plugin in files_to_download {
             if dry_run {
-                println!("  → Would download and verify {}", plugin.name);
+                info!("  → Would download and verify {}", plugin.name);
             } else {
                 let staging_path = Path::new(&staging_dir).join(&plugin.file);
-                println!("  → Downloading {}...", plugin.name);
+                info!("  → Downloading {}...", plugin.name);
                 download_and_verify(plugin, &staging_path).await?;
-                println!("  ✓ {} verified", plugin.name);
+                info!("  ✓ {} verified", plugin.name);
             }
         }
 
@@ -116,7 +117,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
                         && filename.ends_with(".jar")
                         && !managed_files.contains(filename)
                     {
-                        println!("  → Would remove unmanaged file: {}", filename);
+                        info!("  → Would remove unmanaged file: {}", filename);
                         has_changes = true;
                     }
                 }
@@ -141,14 +142,14 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         Ok(changes) => changes,
         Err(e) => {
             // Error occurred - cleanup and return exit code 2
-            eprintln!("Error: {}", e);
+            error!("{}", e);
 
             // Cleanup and restore on error
             if !dry_run
                 && needs_restore
                 && let Err(restore_err) = restore_backup(&plugins_dir, &backup_dir)
             {
-                eprintln!("Warning: Failed to restore backup: {}", restore_err);
+                warn!("Failed to restore backup: {}", restore_err);
             }
 
             // Clean up staging and backup directories
@@ -162,16 +163,16 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
 
     // Clean up staging and backup directories
     if !dry_run && let Err(e) = cleanup_temp_dirs(&plugins_dir) {
-        eprintln!("Warning: Failed to cleanup temp directories: {}", e);
+        warn!("Failed to cleanup temp directories: {}", e);
         // Don't fail on cleanup, but log it
     }
 
     if dry_run {
-        println!("[DRY RUN] Would sync {} plugin(s)", lockfile.plugin.len());
+        info!("[DRY RUN] Would sync {} plugin(s)", lockfile.plugin.len());
         // Return exit code: 0 = no changes, 1 = changes detected
         Ok(if has_changes { 1 } else { 0 })
     } else {
-        println!("Synced {} plugin(s)", lockfile.plugin.len());
+        info!("Synced {} plugin(s)", lockfile.plugin.len());
         Ok(0) // Success
     }
 }
@@ -270,7 +271,7 @@ fn restore_backup(plugins_dir: &str, backup_dir: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("Restoring from backup...");
+    info!("Restoring from backup...");
 
     // Remove current .jar files
     let plugins_path = Path::new(plugins_dir);
@@ -377,7 +378,7 @@ fn remove_unmanaged_files(
             {
                 // Only remove .jar files that aren't managed
                 if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                    println!("  → Removing unmanaged file: {}", filename);
+                    info!("  → Removing unmanaged file: {}", filename);
                     fs::remove_file(&path)?;
                     removed_any = true;
                 }

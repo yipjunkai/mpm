@@ -3,6 +3,7 @@
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::Manifest;
 use crate::sources::REGISTRY;
+use log::info;
 use toml;
 
 pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
@@ -11,7 +12,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
         .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
 
     if dry_run {
-        println!("[DRY RUN] Previewing lock changes...");
+        info!("[DRY RUN] Previewing lock changes...");
     }
 
     let mut lockfile = Lockfile::new();
@@ -19,7 +20,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
 
     // For each plugin, resolve version
     for (name, plugin_spec) in manifest.plugins.iter() {
-        println!("Resolving {}...", name);
+        info!("Resolving {}...", name);
 
         // Get the source implementation
         let source = REGISTRY.get_or_error(&plugin_spec.source)?;
@@ -45,7 +46,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
             hash: resolved.hash.clone(),
         });
 
-        println!("  → {} {}", name, resolved.version);
+        info!("  → {} {}", name, resolved.version);
     }
 
     // Sort plugins by name
@@ -56,7 +57,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
     // 1 = warnings only (changes detected in dry-run)
     // 2 = errors present
     if dry_run {
-        println!("[DRY RUN] Would lock {} plugin(s)", lockfile.plugin.len());
+        info!("[DRY RUN] Would lock {} plugin(s)", lockfile.plugin.len());
 
         // Check if lockfile would change by comparing with existing lockfile
         let exit_code = match Lockfile::load() {
@@ -78,7 +79,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
         Ok(exit_code)
     } else {
         lockfile.save()?;
-        println!("Locked {} plugin(s)", lockfile.plugin.len());
+        info!("Locked {} plugin(s)", lockfile.plugin.len());
         Ok(0) // Success
     }
 }

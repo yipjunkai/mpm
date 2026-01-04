@@ -3,6 +3,7 @@
 use crate::commands::lock;
 use crate::manifest::{Manifest, PluginSpec};
 use crate::sources::REGISTRY;
+use log::{debug, info};
 
 pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Parse spec format:
@@ -56,7 +57,7 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
             {
                 Ok(_) => {
                     // Found it! Use this source
-                    println!("Found plugin '{}' in source '{}'", id, source_name);
+                    debug!("Found plugin '{}' in source '{}'", id, source_name);
                     return add_plugin_to_manifest(
                         &mut manifest,
                         source_name,
@@ -126,7 +127,7 @@ async fn add_plugin_to_manifest(
     );
 
     manifest.save()?;
-    println!("Added plugin '{}' from source '{}'", plugin_name, source);
+    info!("Added plugin '{}' from source '{}'", plugin_name, source);
 
     // Automatically lock after adding unless --no-update is specified
     if !no_update {

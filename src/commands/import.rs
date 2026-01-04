@@ -5,6 +5,7 @@ use crate::constants;
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::{Manifest, MinecraftSpec, PluginSpec};
 use crate::sources::REGISTRY;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -42,7 +43,7 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     let plugins = scan_plugins_dir(&plugins_dir)?;
 
     if plugins.is_empty() {
-        println!("No JAR files found in plugins directory");
+        info!("No JAR files found in plugins directory");
         // Create empty manifest and lockfile
         let manifest = Manifest {
             minecraft: MinecraftSpec {
@@ -55,7 +56,7 @@ pub async fn import_plugins() -> anyhow::Result<()> {
         let lockfile = Lockfile::new();
         lockfile.save()?;
 
-        println!(
+        info!(
             "Created empty {} and {}",
             constants::MANIFEST_FILE,
             constants::LOCKFILE_FILE
@@ -98,8 +99,8 @@ pub async fn import_plugins() -> anyhow::Result<()> {
             None => {
                 // Plugin not found in any source - skip it with a warning
                 skipped_plugins.push((name.clone(), filename.clone()));
-                eprintln!(
-                    "Warning: Plugin '{}' ({}) not found in any source, skipping",
+                warn!(
+                    "Plugin '{}' ({}) not found in any source, skipping",
                     name, filename
                 );
             }
@@ -128,16 +129,16 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     manifest.save()?;
     lockfile.save()?;
 
-    println!("Imported {} plugin(s)", imported_count);
+    info!("Imported {} plugin(s)", imported_count);
     if !skipped_plugins.is_empty() {
-        println!(
+        info!(
             "Skipped {} plugin(s) not found in any source",
             skipped_plugins.len()
         );
     }
     for (name, filename, _, _) in &plugins {
         if let Some(spec) = manifest.plugins.get(name) {
-            println!("  → {} ({}) - source: {}", name, filename, spec.source);
+            info!("  → {} ({}) - source: {}", name, filename, spec.source);
         }
     }
 
@@ -221,10 +222,7 @@ fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<ScannedPlugin>> {
             let (name, version) = match read_plugin_yml_from_jar(&path) {
                 Ok((n, v)) => (n, v),
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Could not read plugin.yml from {}: {}",
-                        filename, e
-                    );
+                    warn!("Could not read plugin.yml from {}: {}", filename, e);
                     // Fallback to filename without .jar extension
                     let fallback_name = filename
                         .strip_suffix(".jar")
@@ -238,7 +236,7 @@ fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<ScannedPlugin>> {
             let hash = match compute_sha256(&path) {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("Warning: Could not compute hash for {}: {}", filename, e);
+                    warn!("Could not compute hash for {}: {}", filename, e);
                     continue; // Skip this plugin if hash computation fails
                 }
             };
