@@ -433,7 +433,7 @@ fn test_lock_creates_lockfile() {
 }
 
 #[test]
-fn test_lock_with_specified_version() {
+fn test_lock_is_deterministic_single_plugin() {
     let temp_dir = setup_test_dir();
     let test_dir = temp_dir.path().to_str().unwrap();
 
