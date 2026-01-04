@@ -22,6 +22,15 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         }
     };
 
+    // Check if there are any GitHub plugins and warn once about version compatibility
+    let has_github_plugins = lockfile.plugin.iter().any(|p| p.source == "github");
+    if has_github_plugins {
+        warn!(
+            "GitHub source does not support Minecraft version filtering. \
+            Compatibility cannot be verified for GitHub plugins."
+        );
+    }
+
     let plugins_dir = config::plugins_dir();
 
     if dry_run {

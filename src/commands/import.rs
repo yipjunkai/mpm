@@ -5,7 +5,7 @@ use crate::constants;
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::{Manifest, MinecraftSpec, PluginSpec};
 use crate::sources::REGISTRY;
-use log::{info, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -42,6 +42,11 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     // Scan plugins directory for JAR files
     let plugins = scan_plugins_dir(&plugins_dir)?;
 
+    debug!(
+        "Scanned plugins directory: found {} plugin(s)",
+        plugins.len()
+    );
+
     if plugins.is_empty() {
         info!("No JAR files found in plugins directory");
         // Create empty manifest and lockfile
@@ -71,9 +76,19 @@ pub async fn import_plugins() -> anyhow::Result<()> {
 
     let mut skipped_plugins = Vec::new();
     for (name, filename, version_option, hash) in &plugins {
+        debug!(
+            "Searching for plugin: name={}, filename={}, version={:?}",
+            name, filename, version_option
+        );
+
         // Try to find the plugin in sources using search functionality
         match find_plugin_source(name, version_option.as_deref(), minecraft_version).await {
             Some((source, plugin_id)) => {
+                debug!(
+                    "Plugin found in source: name={}, source={}, plugin_id={}",
+                    name, source, plugin_id
+                );
+
                 manifest_plugins.insert(
                     name.clone(),
                     PluginSpec {
@@ -97,6 +112,11 @@ pub async fn import_plugins() -> anyhow::Result<()> {
                 });
             }
             None => {
+                debug!(
+                    "Plugin not found in any source: name={}, filename={}",
+                    name, filename
+                );
+
                 // Plugin not found in any source - skip it with a warning
                 skipped_plugins.push((name.clone(), filename.clone()));
                 warn!(
@@ -129,6 +149,12 @@ pub async fn import_plugins() -> anyhow::Result<()> {
     manifest.save()?;
     lockfile.save()?;
 
+    debug!(
+        "Import complete: imported={}, skipped={}",
+        imported_count,
+        skipped_plugins.len()
+    );
+
     info!("Imported {} plugin(s)", imported_count);
     if !skipped_plugins.is_empty() {
         info!(
@@ -153,9 +179,15 @@ async fn find_plugin_source(
     minecraft_version: Option<&str>,
 ) -> Option<(String, String)> {
     let sources = REGISTRY.get_priority_order();
+    let sources_count = sources.len();
 
     for source_impl in sources {
         let source_name = source_impl.name();
+
+        debug!(
+            "Trying source: plugin={}, source={}",
+            plugin_name, source_name
+        );
 
         // Try the plugin name as-is first (this will use search for Hangar/GitHub if needed)
         if source_impl.validate_plugin_id(plugin_name).is_ok() {
@@ -164,10 +196,19 @@ async fn find_plugin_source(
                 .await
             {
                 Ok(_) => {
+                    debug!(
+                        "Plugin found in source: plugin={}, source={}",
+                        plugin_name, source_name
+                    );
+
                     // Found it!
                     return Some((source_name.to_string(), plugin_name.to_string()));
                 }
-                Err(_) => {
+                Err(e) => {
+                    debug!(
+                        "resolve_version failed: plugin={}, source={}, error={}",
+                        plugin_name, source_name, e
+                    );
                     // Continue searching
                 }
             }
@@ -179,14 +220,27 @@ async fn find_plugin_source(
             if lowercase_name != plugin_name
                 && source_impl.validate_plugin_id(&lowercase_name).is_ok()
             {
+                debug!(
+                    "Trying lowercase variant for Modrinth: plugin={}, lowercase={}",
+                    plugin_name, lowercase_name
+                );
+
                 match source_impl
                     .resolve_version(&lowercase_name, version, minecraft_version)
                     .await
                 {
                     Ok(_) => {
+                        debug!(
+                            "Plugin found (lowercase variant): plugin={}, lowercase={}, source={}",
+                            plugin_name, lowercase_name, source_name
+                        );
                         return Some((source_name.to_string(), lowercase_name));
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        debug!(
+                            "resolve_version failed (lowercase): lowercase={}, source={}, error={}",
+                            lowercase_name, source_name, e
+                        );
                         // Continue searching
                     }
                 }
@@ -195,6 +249,11 @@ async fn find_plugin_source(
     }
 
     // Not found in any source
+    debug!(
+        "Plugin not found in any source: plugin={}, sources_tried={}",
+        plugin_name, sources_count
+    );
+
     None
 }
 

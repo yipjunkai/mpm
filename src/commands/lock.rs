@@ -3,7 +3,7 @@
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::Manifest;
 use crate::sources::REGISTRY;
-use log::info;
+use log::{info, warn};
 use toml;
 
 pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
@@ -17,6 +17,18 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
 
     let mut lockfile = Lockfile::new();
     let minecraft_version = Some(manifest.minecraft.version.as_str());
+
+    // Check if there are any GitHub plugins and warn once about version compatibility
+    let has_github_plugins = manifest
+        .plugins
+        .values()
+        .any(|spec| spec.source == "github");
+    if has_github_plugins && minecraft_version.is_some() {
+        warn!(
+            "GitHub source does not support Minecraft version filtering. \
+            Compatibility cannot be verified for GitHub plugins."
+        );
+    }
 
     // For each plugin, resolve version
     for (name, plugin_spec) in manifest.plugins.iter() {

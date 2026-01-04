@@ -67,14 +67,7 @@ impl PluginSource for GitHubSource {
         minecraft_version: Option<&str>,
     ) -> anyhow::Result<ResolvedVersion> {
         // GitHub Releases don't have built-in Minecraft version metadata
-        // We cannot validate compatibility, so warn the user if a Minecraft version is specified
-        if minecraft_version.is_some() {
-            warn!(
-                "GitHub source does not support Minecraft version filtering. \
-                Compatibility cannot be verified for plugin '{}'.",
-                plugin_id
-            );
-        }
+        // Note: Warning about Minecraft version compatibility is logged once in lock/sync commands
         // Parse plugin_id - could be owner/repo or just name (for search)
         let parts: Vec<&str> = plugin_id.split('/').collect();
         let (owner, repo) = if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {

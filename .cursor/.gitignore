@@ -1,3 +1,5 @@
 # Cursor generated files (keep hooks/, commands/, and hooks.json)
 plans/
 rules/
+
+*.log
