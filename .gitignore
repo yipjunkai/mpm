@@ -4,3 +4,5 @@
 plugins.lock
 plugins.toml
 plugins/
+
+test-servers/
