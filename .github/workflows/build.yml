@@ -113,17 +113,15 @@ jobs:
         shell: bash
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f 2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.cargo_version.outputs.tag }}
-          name: ${{ steps.cargo_version.outputs.tag }}
+          tag_name: ${{ steps.cargo_version.outputs.version }}
           body: |
-            Release ${{ steps.cargo_version.outputs.tag }}
+            Release ${{ steps.cargo_version.outputs.version }}
           files: |
             artifacts/**/mpm-*.zip
             artifacts/**/mpm-*.tar.gz
