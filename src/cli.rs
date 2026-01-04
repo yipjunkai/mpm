@@ -10,9 +10,11 @@ use clap::{Parser, Subcommand};
     long_about = "mpm is a deterministic plugin manager for Minecraft servers that ensures \
     reproducible plugin installations through lockfiles and hash verification."
 )]
+#[command(version)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
