@@ -17,19 +17,30 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: mpm-linux-x86_64
+            artifact_name: mpm-x86_64-unknown-linux-gnu
+            asset_name: mpm-linux-x86_64
+            archive_ext: .tar.gz
             binary_name: mpm
+
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: mpm-macos-x86_64
+            artifact_name: mpm-x86_64-apple-darwin
+            asset_name: mpm-macos-x86_64
+            archive_ext: .tar.gz
             binary_name: mpm
+
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: mpm-macos-aarch64
+            artifact_name: mpm-aarch64-apple-darwin
+            asset_name: mpm-macos-aarch64
+            archive_ext: .tar.gz
             binary_name: mpm
+
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: mpm-windows-x86_64
+            artifact_name: mpm-x86_64-pc-windows-msvc
+            asset_name: mpm-windows-x86_64
+            archive_ext: .zip
             binary_name: mpm.exe
 
     permissions:
@@ -47,17 +58,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-cargo-
+        uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -67,12 +68,28 @@ jobs:
         run: |
           mkdir -p release-artifact
           cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} release-artifact/
+          cp LICENSE-MIT release-artifact/ || true
+          cp LICENSE-APACHE release-artifact/ || true
+          cp README.md release-artifact/ || true
+
+      - name: Create archive
+        shell: bash
+        run: |
+          cd release-artifact
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Windows: use zip command (available on GitHub Actions Windows runners)
+            zip -r ../${{ matrix.asset_name }}${{ matrix.archive_ext }} *
+          else
+            # Linux/macOS: use tar
+            tar -czf ../${{ matrix.asset_name }}${{ matrix.archive_ext }} *
+          fi
+          cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: release-artifact/*
+          path: ${{ matrix.asset_name }}${{ matrix.archive_ext }}
           retention-days: 7
 
   release:
@@ -91,135 +108,25 @@ jobs:
         with:
           path: artifacts
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
       - name: Extract version from Cargo.toml
         id: cargo_version
         shell: bash
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
-      - name: Determine or create release
-        id: release
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.cargo_version.outputs.version }}"
-          TAG="v${VERSION}"
-
-          # Check if release already exists
-          RELEASE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG")
-
-          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id // empty' 2>/dev/null || echo "")
-
-          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ] || [ "$RELEASE_ID" = "" ]; then
-            echo "Release $TAG does not exist. Creating new release..."
-
-            # Create the release
-            CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"tag_name\": \"$TAG\", \"name\": \"$TAG\", \"body\": \"Release $TAG\"}" \
-              "https://api.github.com/repos/${{ github.repository }}/releases")
-
-            HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -1)
-            CREATE_BODY=$(echo "$CREATE_RESPONSE" | sed '$d')
-
-            if [ "$HTTP_CODE" != "201" ]; then
-              echo "Error: Failed to create release (HTTP $HTTP_CODE)"
-              echo "Response: $CREATE_BODY"
-              exit 1
-            fi
-
-            if [ -z "$CREATE_BODY" ]; then
-              echo "Error: Empty response from GitHub API"
-              exit 1
-            fi
-
-            RELEASE_ID=$(echo "$CREATE_BODY" | jq -r '.id // empty' 2>/dev/null || echo "")
-
-            if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ] || [ "$RELEASE_ID" = "" ]; then
-              echo "Error: Could not parse release ID from response"
-              echo "Response: $CREATE_BODY"
-              exit 1
-            fi
-
-            echo "Created release $TAG with ID: $RELEASE_ID"
-          else
-            echo "Release $TAG already exists (ID: $RELEASE_ID)"
-          fi
-
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
-
-      - name: Create release archives
-        shell: bash
-        run: |
-          cd artifacts
-          for dir in */; do
-            dirname=$(basename "$dir")
-            cd "$dirname"
-            if [ -f mpm.exe ]; then
-              # Windows: create zip
-              zip -r "../${dirname}.zip" .
-            else
-              # Unix: create tar.gz
-              tar -czf "../${dirname}.tar.gz" .
-            fi
-            cd ..
-          done
-
-      - name: Upload to release
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ steps.release.outputs.tag }}"
-          RELEASE_ID="${{ steps.release.outputs.release_id }}"
-          cd artifacts
-
-          echo "Uploading binaries to release $TAG (ID: $RELEASE_ID)"
-
-          # Get the release info to check for existing assets
-          RELEASE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID")
-
-          # Upload each archive to the release using GitHub API
-          for archive in *.zip *.tar.gz; do
-            if [ -f "$archive" ]; then
-              echo "Uploading $archive to release $TAG"
-
-              # Check if asset already exists and delete it
-              ASSET_NAME=$(basename "$archive")
-              EXISTING_ASSETS=$(echo "$RELEASE_RESPONSE" | jq -r ".assets[] | select(.name == \"$ASSET_NAME\") | .id")
-
-              if [ -n "$EXISTING_ASSETS" ]; then
-                echo "Deleting existing asset $ASSET_NAME (ID: $EXISTING_ASSETS)"
-                curl -X DELETE \
-                  -H "Authorization: token $GITHUB_TOKEN" \
-                  "https://api.github.com/repos/${{ github.repository }}/releases/assets/$EXISTING_ASSETS" || true
-              fi
-
-              # Upload the asset
-              UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-                -H "Authorization: token $GITHUB_TOKEN" \
-                -H "Content-Type: application/octet-stream" \
-                --data-binary "@$archive" \
-                "https://uploads.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=$ASSET_NAME")
-
-              HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -1)
-              if [ "$HTTP_CODE" != "201" ]; then
-                echo "Warning: Failed to upload $archive (HTTP $HTTP_CODE)"
-                echo "$UPLOAD_RESPONSE" | head -1
-              else
-                echo "Successfully uploaded $archive"
-              fi
-            fi
-          done
-
-          echo "Completed uploading binaries to release $TAG"
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.cargo_version.outputs.tag }}
+          name: ${{ steps.cargo_version.outputs.tag }}
+          body: |
+            Release ${{ steps.cargo_version.outputs.tag }}
+          files: |
+            artifacts/**/mpm-*.zip
+            artifacts/**/mpm-*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: false
