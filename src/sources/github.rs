@@ -22,6 +22,26 @@ struct Asset {
     browser_download_url: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct Repository {
+    #[allow(dead_code)] // Required for deserialization but not used
+    full_name: String,
+    name: String,
+    owner: RepositoryOwner,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryOwner {
+    login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    items: Vec<Repository>,
+    #[allow(dead_code)] // Required for deserialization but not used
+    total_count: u64,
+}
+
 pub struct GitHubSource;
 
 #[async_trait]
@@ -31,14 +51,11 @@ impl PluginSource for GitHubSource {
     }
 
     fn validate_plugin_id(&self, plugin_id: &str) -> anyhow::Result<()> {
-        // GitHub requires owner/repo format
-        let parts: Vec<&str> = plugin_id.split('/').collect();
-        if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-            anyhow::bail!(
-                "Invalid GitHub repository format. Expected 'owner/repo', got '{}'",
-                plugin_id
-            );
+        // GitHub accepts owner/repo format or single word (for search)
+        if plugin_id.is_empty() {
+            anyhow::bail!("GitHub repository name cannot be empty");
         }
+        // Allow both formats: "owner/repo" or just "name" (for search)
         Ok(())
     }
 
@@ -57,16 +74,25 @@ impl PluginSource for GitHubSource {
                 plugin_id
             );
         }
-        // Parse plugin_id as owner/repo
+        // Parse plugin_id - could be owner/repo or just name (for search)
         let parts: Vec<&str> = plugin_id.split('/').collect();
-        if parts.len() != 2 {
+        let (owner, repo) = if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            // Full format: owner/repo
+            (parts[0].to_string(), parts[1].to_string())
+        } else if parts.len() == 1 && !parts[0].is_empty() {
+            // Single word - search for it
+            let search_name = parts[0];
+            let found_repo = self.search_repository(search_name).await?;
+            (found_repo.owner.login, found_repo.name)
+        } else {
             anyhow::bail!(
-                "Invalid GitHub repository format. Expected 'owner/repo', got '{}'",
+                "Invalid GitHub repository format. Expected 'owner/repo' or repository name, got '{}'",
                 plugin_id
             );
-        }
-        let owner = parts[0];
-        let repo = parts[1];
+        };
+
+        let owner = owner.as_str();
+        let repo = repo.as_str();
 
         // First verify the repository exists
         let repo_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
@@ -182,5 +208,58 @@ impl PluginSource for GitHubSource {
             url: jar_asset.browser_download_url.clone(),
             hash,
         })
+    }
+}
+
+impl GitHubSource {
+    /// Search for a repository by name and return the best match (exact name match, case-insensitive)
+    async fn search_repository(&self, search_name: &str) -> anyhow::Result<Repository> {
+        // Search for repositories with the name, prioritizing exact matches
+        // Use GitHub search API: search for repos with name matching
+        let search_query = format!("{} in:name", urlencoding::encode(search_name));
+        let search_url = format!(
+            "https://api.github.com/search/repositories?q={}&sort=stars&order=desc&per_page=100",
+            urlencoding::encode(&search_query)
+        );
+
+        let response = reqwest::get(&search_url).await?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Failed to search GitHub repositories: HTTP {}",
+                response.status()
+            );
+        }
+
+        let search_result: SearchResponse = response.json().await?;
+
+        if search_result.items.is_empty() {
+            anyhow::bail!("No repositories found matching '{}' on GitHub", search_name);
+        }
+
+        // Sort by exact name match (case-insensitive)
+        // Exact matches first, then by stars (already sorted by API, but we re-sort for exact matches)
+        let mut results = search_result.items;
+        results.sort_by(|a, b| {
+            let a_name_lower = a.name.to_lowercase();
+            let b_name_lower = b.name.to_lowercase();
+            let search_lower = search_name.to_lowercase();
+
+            // Exact match gets highest priority
+            let a_exact = a_name_lower == search_lower;
+            let b_exact = b_name_lower == search_lower;
+
+            match (a_exact, b_exact) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    // If both or neither are exact, maintain original order (by stars)
+                    std::cmp::Ordering::Equal
+                }
+            }
+        });
+
+        // Return the first (best) match
+        Ok(results.into_iter().next().unwrap())
     }
 }

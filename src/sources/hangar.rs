@@ -9,10 +9,15 @@ use serde::Deserialize;
 struct Project {
     #[allow(dead_code)] // Required for deserialization but not used
     id: i64,
-    #[allow(dead_code)] // Required for deserialization but not used
     name: String,
-    #[allow(dead_code)] // Required for deserialization but not used
     namespace: Namespace,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    result: Vec<Project>,
+    #[allow(dead_code)] // Required for deserialization but not used
+    pagination: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,14 +71,11 @@ impl PluginSource for HangarSource {
     }
 
     fn validate_plugin_id(&self, plugin_id: &str) -> anyhow::Result<()> {
-        // Hangar requires author/slug format
-        let parts: Vec<&str> = plugin_id.split('/').collect();
-        if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-            anyhow::bail!(
-                "Invalid Hangar plugin ID format. Expected 'author/slug', got '{}'",
-                plugin_id
-            );
+        // Hangar accepts author/slug format or single word (for search)
+        if plugin_id.is_empty() {
+            anyhow::bail!("Hangar plugin ID cannot be empty");
         }
+        // Allow both formats: "author/slug" or just "name" (for search)
         Ok(())
     }
 
@@ -83,16 +85,25 @@ impl PluginSource for HangarSource {
         requested_version: Option<&str>,
         minecraft_version: Option<&str>,
     ) -> anyhow::Result<ResolvedVersion> {
-        // Parse plugin_id as author/slug
+        // Parse plugin_id - could be author/slug or just name (for search)
         let parts: Vec<&str> = plugin_id.split('/').collect();
-        if parts.len() != 2 {
+        let (author, slug) = if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            // Full format: author/slug
+            (parts[0].to_string(), parts[1].to_string())
+        } else if parts.len() == 1 && !parts[0].is_empty() {
+            // Single word - search for it
+            let search_name = parts[0];
+            let found_project = self.search_project(search_name).await?;
+            (found_project.namespace.owner, found_project.namespace.slug)
+        } else {
             anyhow::bail!(
-                "Invalid Hangar plugin ID format. Expected 'author/slug', got '{}'",
+                "Invalid Hangar plugin ID format. Expected 'author/slug' or plugin name, got '{}'",
                 plugin_id
             );
-        }
-        let author = parts[0];
-        let slug = parts[1];
+        };
+
+        let author = author.as_str();
+        let slug = slug.as_str();
 
         // Get plugin info to verify it exists
         let plugin_url = format!(
@@ -254,5 +265,54 @@ impl PluginSource for HangarSource {
             url: download.download_url.clone(),
             hash,
         })
+    }
+}
+
+impl HangarSource {
+    /// Search for a project by name and return the best match (exact name match, case-insensitive)
+    async fn search_project(&self, search_name: &str) -> anyhow::Result<Project> {
+        let search_url = format!(
+            "https://hangar.papermc.io/api/v1/projects?q={}",
+            urlencoding::encode(search_name)
+        );
+        let response = reqwest::get(&search_url).await?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Failed to search Hangar projects: HTTP {}",
+                response.status()
+            );
+        }
+
+        let search_result: SearchResponse = response.json().await?;
+
+        if search_result.result.is_empty() {
+            anyhow::bail!("No projects found matching '{}' in Hangar", search_name);
+        }
+
+        // Sort by exact name match (case-insensitive)
+        // Exact matches first, then partial matches
+        let mut results = search_result.result;
+        results.sort_by(|a, b| {
+            let a_name_lower = a.name.to_lowercase();
+            let b_name_lower = b.name.to_lowercase();
+            let search_lower = search_name.to_lowercase();
+
+            // Exact match gets highest priority
+            let a_exact = a_name_lower == search_lower;
+            let b_exact = b_name_lower == search_lower;
+
+            match (a_exact, b_exact) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    // If both or neither are exact, sort by name
+                    a_name_lower.cmp(&b_name_lower)
+                }
+            }
+        });
+
+        // Return the first (best) match
+        Ok(results.into_iter().next().unwrap())
     }
 }

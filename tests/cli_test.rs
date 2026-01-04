@@ -1650,8 +1650,8 @@ fn test_add_hangar_invalid_format() {
 
     run_command(&["init"], test_dir);
 
-    // Invalid format - missing author/slug separator
-    let (success, output, _) = run_command(&["add", "hangar:invalid"], test_dir);
+    // Invalid format - empty string (single-word IDs are now valid for search)
+    let (success, output, _) = run_command(&["add", "hangar:"], test_dir);
 
     assert!(
         !success,
@@ -1659,8 +1659,7 @@ fn test_add_hangar_invalid_format() {
         output
     );
     assert!(
-        output.contains("Invalid Hangar project ID format")
-            || output.contains("Expected 'author/slug'"),
+        output.contains("cannot be empty") || output.contains("Invalid"),
         "Expected error message in output: {}",
         output
     );
@@ -1812,8 +1811,8 @@ fn test_add_github_invalid_format() {
 
     run_command(&["init"], test_dir);
 
-    // Invalid format - missing owner/repo separator
-    let (success, output, _) = run_command(&["add", "github:invalid"], test_dir);
+    // Invalid format - empty string (single-word IDs are now valid for search)
+    let (success, output, _) = run_command(&["add", "github:"], test_dir);
 
     assert!(
         !success,
@@ -1821,8 +1820,7 @@ fn test_add_github_invalid_format() {
         output
     );
     assert!(
-        output.contains("Invalid GitHub repository format")
-            || output.contains("Expected 'owner/repo'"),
+        output.contains("cannot be empty") || output.contains("Invalid"),
         "Expected error message in output: {}",
         output
     );
