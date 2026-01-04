@@ -121,20 +121,43 @@ jobs:
         with:
           path: artifacts
 
-      - name: Generate checksums table
-        id: checksums
+      - name: Generate sorted checksums and file list
+        id: sorted_data
         shell: bash
         run: |
-          TABLE="| Platform | Archive | SHA256 |
-          | --- | --- | --- |"
+          set -euo pipefail
+
+          tmp="sorted_checksums.txt"
+
+          # Collect and normalize: ARCHIVE|PLATFORM|HASH
+          > "$tmp"
           for file in artifacts/*/checksum.txt; do
             IFS='|' read -r PLATFORM ARCHIVE HASH < "$file"
-            TABLE="$TABLE
-          | $PLATFORM | \`$ARCHIVE\` | \`$HASH\` |"
+            echo "$ARCHIVE|$PLATFORM|$HASH" >> "$tmp"
           done
-          echo "table<<EOF" >> $GITHUB_OUTPUT
-          echo "$TABLE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Sort deterministically by archive name
+          sort -t'|' -k1 "$tmp" -o "$tmp"
+
+          # Generate sorted file list
+          {
+            echo "files<<EOF"
+            cut -d'|' -f1 "$tmp" | while read -r archive; do
+              find artifacts -name "$archive" -type f
+            done
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          # Generate markdown table
+          {
+            echo "table<<EOF"
+            echo "| Platform | Archive | SHA256 |"
+            echo "| --- | --- | --- |"
+            while IFS='|' read -r ARCHIVE PLATFORM HASH; do
+              echo "| $PLATFORM | \`$ARCHIVE\` | \`$HASH\` |"
+            done < "$tmp"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
 
       - name: Extract version from Cargo.toml
         id: cargo_version
@@ -153,10 +176,8 @@ jobs:
 
             ## SHA256 Checksums
 
-            ${{ steps.checksums.outputs.table }}
-          files: |
-            artifacts/**/mpm-*.zip
-            artifacts/**/mpm-*.tar.gz
+            ${{ steps.sorted_data.outputs.table }}
+          files: ${{ steps.sorted_data.outputs.files }}
           draft: false
           prerelease: false
           generate_release_notes: false
