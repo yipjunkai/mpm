@@ -16,12 +16,8 @@ struct Resource {
     tested_versions: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    data: Vec<Resource>,
-    #[allow(dead_code)] // Required for deserialization but not used
-    size: i64,
-}
+// Spiget search API returns an array directly, not an object
+type SearchResponse = Vec<Resource>;
 
 #[derive(Debug, Clone, Deserialize)]
 struct Version {
@@ -114,10 +110,16 @@ impl PluginSource for SpigotSource {
                     v.tested_versions
                         .as_ref()
                         .map(|tvs| {
-                            tvs.iter()
-                                .any(|tv| version_matcher::matches_mc_version(tv, mc_version))
+                            if tvs.is_empty() {
+                                // If tested_versions is empty, include the version
+                                // (many Spigot plugins don't properly fill this field)
+                                true
+                            } else {
+                                tvs.iter()
+                                    .any(|tv| version_matcher::matches_mc_version(tv, mc_version))
+                            }
                         })
-                        .unwrap_or(false)
+                        .unwrap_or(true) // If tested_versions is None, include the version
                 })
                 .cloned()
                 .collect()
@@ -137,10 +139,17 @@ impl PluginSource for SpigotSource {
                             .tested_versions
                             .as_ref()
                             .map(|tvs| {
-                                tvs.iter()
-                                    .any(|tv| version_matcher::matches_mc_version(tv, mc_version))
+                                if tvs.is_empty() {
+                                    // If tested_versions is empty, consider it compatible
+                                    // (many Spigot plugins don't properly fill this field)
+                                    true
+                                } else {
+                                    tvs.iter().any(|tv| {
+                                        version_matcher::matches_mc_version(tv, mc_version)
+                                    })
+                                }
                             })
-                            .unwrap_or(false);
+                            .unwrap_or(true); // If tested_versions is None, consider it compatible
                         if !is_compatible {
                             let compatible_versions = v
                                 .tested_versions
@@ -261,36 +270,56 @@ impl PluginSource for SpigotSource {
 impl SpigotSource {
     /// Search for a resource by name and return the best match (exact name match, case-insensitive)
     async fn search_resource(&self, search_name: &str) -> anyhow::Result<Resource> {
-        let search_url = format!(
-            "https://api.spiget.org/v2/search/resources/{}?size=100",
-            urlencoding::encode(search_name)
-        );
-        let response = reqwest::get(&search_url).await?;
+        // Try the original search name first
+        let mut search_terms = vec![search_name.to_string()];
 
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "Failed to search Spigot resources: HTTP {}",
-                response.status()
+        // If the search name contains hyphens, also try with spaces instead
+        if search_name.contains('-') {
+            let spaced_version = search_name.replace('-', " ");
+            search_terms.push(spaced_version);
+        }
+
+        // Try each search term variation
+        for search_term in &search_terms {
+            let search_url = format!(
+                "https://api.spiget.org/v2/search/resources/{}?size=100",
+                urlencoding::encode(search_term)
             );
+            let response = reqwest::get(&search_url).await?;
+
+            if !response.status().is_success() {
+                continue; // Try next variation
+            }
+
+            let search_result: SearchResponse = response.json().await?;
+
+            if !search_result.is_empty() {
+                // Found results with this search term, process them
+                return self.process_search_results(search_result, search_name);
+            }
         }
 
-        let search_result: SearchResponse = response.json().await?;
+        // If we get here, no search terms returned results
+        anyhow::bail!("No resources found matching '{}' in Spigot", search_name);
+    }
 
-        if search_result.data.is_empty() {
-            anyhow::bail!("No resources found matching '{}' in Spigot", search_name);
-        }
-
+    /// Process search results and return the best match
+    fn process_search_results(
+        &self,
+        mut search_result: SearchResponse,
+        original_search_name: &str,
+    ) -> anyhow::Result<Resource> {
         // Sort by exact name match (case-insensitive)
         // Exact matches first, then partial matches
-        let mut results = search_result.data;
-        results.sort_by(|a, b| {
+        search_result.sort_by(|a, b| {
             let a_name_lower = a.name.to_lowercase();
             let b_name_lower = b.name.to_lowercase();
-            let search_lower = search_name.to_lowercase();
+            let search_lower = original_search_name.to_lowercase();
+            let search_spaced = search_lower.replace('-', " ");
 
-            // Exact match gets highest priority
-            let a_exact = a_name_lower == search_lower;
-            let b_exact = b_name_lower == search_lower;
+            // Exact match gets highest priority (check both hyphenated and spaced versions)
+            let a_exact = a_name_lower == search_lower || a_name_lower == search_spaced;
+            let b_exact = b_name_lower == search_lower || b_name_lower == search_spaced;
 
             match (a_exact, b_exact) {
                 (true, false) => std::cmp::Ordering::Less,
@@ -303,6 +332,6 @@ impl SpigotSource {
         });
 
         // Return the first (best) match
-        Ok(results.into_iter().next().unwrap())
+        Ok(search_result.into_iter().next().unwrap())
     }
 }
