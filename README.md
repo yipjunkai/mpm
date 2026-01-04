@@ -61,7 +61,7 @@ The binary will be located at `target/release/mpm`.
    mpm add worldedit@7.3.0
    ```
 
-   You can specify a version with `@version`, or omit it to use the latest compatible version. The source defaults to Modrinth, but you can specify it explicitly:
+   You can specify a version with `@version`, or omit it to use the latest compatible version. You can specify the source explicitly:
 
    ```bash
    mpm add modrinth:fabric-api
@@ -114,7 +114,7 @@ Initialize a new plugin manifest. Creates `plugins.toml` in the current director
 Add a plugin to the manifest. Automatically validates compatibility with the Minecraft version in your manifest and updates the lockfile.
 
 - `<spec>`: Plugin specification in format `[source:]id[@version]`
-  - `fabric-api` - Adds from default source (Modrinth)
+  - `fabric-api` - Searches through all sources in priority order
   - `worldedit@7.3.0` - Adds specific version
   - `modrinth:fabric-api` - Explicitly specify Modrinth source
   - `hangar:GeyserMC/Geyser` - Add from Hangar (PaperMC repository)
@@ -139,11 +139,11 @@ This ensures you only add plugins that will work with your server version.
 
 **Supported sources:**
 
-| Source     | Description                          | Format                                 | MC Version Check | Status       |
-| ---------- | ------------------------------------ | -------------------------------------- | ---------------- | ------------ |
-| `modrinth` | Modrinth plugin repository (default) | `plugin-id` or `plugin-id@version`     | ✅ Yes           | ✅ Available |
-| `hangar`   | Hangar (PaperMC plugin repository)   | `author/slug` or `author/slug@version` | ✅ Yes           | ✅ Available |
-| `github`   | GitHub Releases                      | `owner/repo` or `owner/repo@tag`       | ⚠️ Warning only  | ✅ Available |
+| Source     | Description                        | Format                                 | MC Version Check | Status       |
+| ---------- | ---------------------------------- | -------------------------------------- | ---------------- | ------------ |
+| `modrinth` | Modrinth plugin repository         | `plugin-id` or `plugin-id@version`     | ✅ Yes           | ✅ Available |
+| `hangar`   | Hangar (PaperMC plugin repository) | `author/slug` or `author/slug@version` | ✅ Yes           | ✅ Available |
+| `github`   | GitHub Releases                    | `owner/repo` or `owner/repo@tag`       | ⚠️ Warning only  | ✅ Available |
 
 **Note:** GitHub Releases don't include Minecraft version metadata, so compatibility cannot be automatically verified. A warning will be displayed when adding GitHub plugins.
 
@@ -237,7 +237,6 @@ hash = "sha512:..."
 ### Default Values
 
 - Default Minecraft version: `1.21.11`
-- Default plugin source: `modrinth`
 - Plugins directory: `plugins/` (relative to config directory, or `PM_PLUGINS_DIR` if set)
 
 ## Exit Codes
@@ -260,7 +259,7 @@ mpm init 1.20.1
 
 # Add plugins from different sources
 # Compatibility is automatically checked
-mpm add fabric-api                    # Modrinth (default)
+mpm add fabric-api                    # Searches through all sources in priority order
 mpm add hangar:GeyserMC/Geyser       # Hangar
 mpm add github:PaperMC/Paper         # GitHub Releases (warning shown)
 

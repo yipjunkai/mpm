@@ -28,7 +28,8 @@ impl SourceRegistry {
             sources: HashMap::new(),
         };
 
-        // Register all sources
+        // Register all sources in priority order
+        // Priority: modrinth > hangar > github
         registry.register(Arc::new(ModrinthSource));
         registry.register(Arc::new(HangarSource));
         registry.register(Arc::new(GitHubSource));
@@ -56,6 +57,23 @@ impl SourceRegistry {
                     .join(", ")
             )
         })
+    }
+
+    /// Get sources in priority order for searching
+    /// Priority: modrinth > hangar > github
+    pub fn get_priority_order(&self) -> Vec<&Arc<dyn PluginSource>> {
+        let mut sources = Vec::new();
+        // Add sources in priority order
+        if let Some(source) = self.get("modrinth") {
+            sources.push(source);
+        }
+        if let Some(source) = self.get("hangar") {
+            sources.push(source);
+        }
+        if let Some(source) = self.get("github") {
+            sources.push(source);
+        }
+        sources
     }
 }
 

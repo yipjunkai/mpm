@@ -1,21 +1,20 @@
 // Add command for adding a plugin to the manifest
 
 use crate::commands::lock;
-use crate::constants;
 use crate::manifest::{Manifest, PluginSpec};
 use crate::sources::REGISTRY;
 
 pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Parse spec format:
     // - source:id or source:id@version (e.g., modrinth:fabric-api)
-    // - id or id@version (defaults to modrinth source)
+    // - id or id@version (searches through all sources in priority order)
     let (source, id_version) = if let Some(colon_pos) = spec.find(':') {
         let source = &spec[..colon_pos];
         let id_version = &spec[colon_pos + 1..];
-        (source, id_version)
+        (Some(source), id_version)
     } else {
-        // No colon found, default to modrinth
-        (constants::DEFAULT_PLUGIN_SOURCE, spec.as_str())
+        // No colon found, will search through all sources
+        (None, spec.as_str())
     };
 
     let (id, version) = if let Some(at_pos) = id_version.find('@') {
@@ -30,12 +29,69 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     let mut manifest = Manifest::load()
         .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
 
-    // Validate compatibility before adding to manifest
-    let source_impl = REGISTRY.get_or_error(source)?;
+    let minecraft_version = Some(manifest.minecraft.version.as_str());
+
+    // If source is specified, use it directly
+    // Otherwise, search through all sources in priority order
+    let (source_name, source_impl) = if let Some(source_str) = source {
+        let source_impl = REGISTRY.get_or_error(source_str)?;
+        (source_str, source_impl)
+    } else {
+        // Search through sources in priority order
+        let sources = REGISTRY.get_priority_order();
+        let mut last_error = None;
+
+        for source_impl in sources {
+            let source_name = source_impl.name();
+
+            // First, try to validate the plugin ID format (fast check)
+            if source_impl.validate_plugin_id(id).is_err() {
+                continue; // Skip this source if ID format doesn't match
+            }
+
+            // Then try to resolve the version (confirms existence)
+            match source_impl
+                .resolve_version(id, version.as_deref(), minecraft_version)
+                .await
+            {
+                Ok(_) => {
+                    // Found it! Use this source
+                    println!("Found plugin '{}' in source '{}'", id, source_name);
+                    return add_plugin_to_manifest(
+                        &mut manifest,
+                        source_name,
+                        id,
+                        version,
+                        no_update,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    // Store error but continue searching
+                    last_error = Some((source_name, e));
+                }
+            }
+        }
+
+        // If we get here, plugin wasn't found in any source
+        let error_msg = if let Some((last_source, last_err)) = last_error {
+            format!(
+                "Plugin '{}' not found in any source. Last attempted source '{}': {}",
+                id, last_source, last_err
+            )
+        } else {
+            format!(
+                "Plugin '{}' not found in any source. No source accepted the plugin ID format.",
+                id
+            )
+        };
+        anyhow::bail!(error_msg);
+    };
+
+    // Source was explicitly specified, validate and add
     source_impl.validate_plugin_id(id)?;
 
     // Check compatibility with Minecraft version
-    let minecraft_version = Some(manifest.minecraft.version.as_str());
     let _resolved = source_impl
         .resolve_version(id, version.as_deref(), minecraft_version)
         .await
@@ -43,11 +99,21 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
             anyhow::anyhow!(
                 "Failed to resolve plugin '{}' from source '{}': {}",
                 id,
-                source,
+                source_name,
                 e
             )
         })?;
 
+    add_plugin_to_manifest(&mut manifest, source_name, id, version, no_update).await
+}
+
+async fn add_plugin_to_manifest(
+    manifest: &mut Manifest,
+    source: &str,
+    id: &str,
+    version: Option<String>,
+    no_update: bool,
+) -> anyhow::Result<()> {
     // Add plugin to manifest (compatibility check passed)
     let plugin_name = id.to_string();
     manifest.plugins.insert(

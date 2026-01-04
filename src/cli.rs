@@ -31,7 +31,7 @@ pub enum Commands {
     /// Adds a plugin specification to plugins.toml. The spec format is:
     /// source:id, source:id@version, id, or id@version
     ///
-    /// If no source is specified, defaults to DEFAULT_PLUGIN_SOURCE.
+    /// If no source is specified, searches through all sources in priority order.
     ///
     /// Examples:
     ///   mpm add fabric-api

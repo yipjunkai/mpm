@@ -4,6 +4,7 @@ use crate::config;
 use crate::constants;
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::{Manifest, MinecraftSpec, PluginSpec};
+use crate::sources::REGISTRY;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -20,7 +21,7 @@ struct PluginYml {
     version: Option<String>,
 }
 
-pub fn import_plugins() -> anyhow::Result<()> {
+pub async fn import_plugins() -> anyhow::Result<()> {
     // Check if plugins.toml already exists
     if Manifest::load().is_ok() {
         anyhow::bail!(
@@ -62,17 +63,33 @@ pub fn import_plugins() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Create manifest
+    // Search for sources for each plugin
+    let minecraft_version = Some(constants::DEFAULT_MC_VERSION);
     let mut manifest_plugins = BTreeMap::new();
-    for (name, _, version_option, _) in &plugins {
+    let mut lockfile_plugins = Vec::new();
+
+    for (name, filename, version_option, hash) in &plugins {
+        // Try to find the plugin in sources
+        let (source, plugin_id) =
+            find_plugin_source(name, version_option.as_deref(), minecraft_version).await;
+
         manifest_plugins.insert(
             name.clone(),
             PluginSpec {
-                source: "unknown".to_string(),
-                id: name.clone(),
+                source: source.clone(),
+                id: plugin_id.clone(),
                 version: version_option.clone(),
             },
         );
+
+        lockfile_plugins.push(LockedPlugin {
+            name: name.clone(),
+            source,
+            version: version_option.clone().unwrap_or_else(|| filename.clone()),
+            file: filename.clone(),
+            url: "unknown://".to_string(),
+            hash: hash.clone(),
+        });
     }
 
     let manifest = Manifest {
@@ -84,15 +101,8 @@ pub fn import_plugins() -> anyhow::Result<()> {
 
     // Create lockfile
     let mut lockfile = Lockfile::new();
-    for (name, filename, version_option, hash) in &plugins {
-        lockfile.add_plugin(LockedPlugin {
-            name: name.clone(),
-            source: "unknown".to_string(),
-            version: version_option.clone().unwrap_or_else(|| filename.clone()),
-            file: filename.clone(),
-            url: "unknown://".to_string(),
-            hash: hash.clone(),
-        });
+    for plugin in lockfile_plugins {
+        lockfile.add_plugin(plugin);
     }
 
     // Sort plugins by name
@@ -104,10 +114,75 @@ pub fn import_plugins() -> anyhow::Result<()> {
 
     println!("Imported {} plugin(s)", plugins.len());
     for (name, filename, _, _) in &plugins {
-        println!("  → {} ({})", name, filename);
+        let source = manifest
+            .plugins
+            .get(name)
+            .map(|spec| spec.source.as_str())
+            .unwrap_or("unknown");
+        if source == "unknown" {
+            println!("  → {} ({}) - source: unknown", name, filename);
+        } else {
+            println!("  → {} ({}) - source: {}", name, filename, source);
+        }
     }
 
     Ok(())
+}
+
+/// Search for a plugin across all sources in priority order
+/// Returns (source_name, plugin_id)
+async fn find_plugin_source(
+    plugin_name: &str,
+    version: Option<&str>,
+    minecraft_version: Option<&str>,
+) -> (String, String) {
+    let sources = REGISTRY.get_priority_order();
+
+    for source_impl in sources {
+        let source_name = source_impl.name();
+
+        // Try the plugin name as-is first
+        if source_impl.validate_plugin_id(plugin_name).is_ok() {
+            match source_impl
+                .resolve_version(plugin_name, version, minecraft_version)
+                .await
+            {
+                Ok(_) => {
+                    // Found it!
+                    return (source_name.to_string(), plugin_name.to_string());
+                }
+                Err(_) => {
+                    // Continue searching
+                }
+            }
+        }
+
+        // For Hangar and GitHub, try some common transformations
+        // Hangar format: author/slug, so if name doesn't have /, skip
+        // GitHub format: owner/repo, so if name doesn't have /, skip
+        // Modrinth: try lowercase version
+        if source_name == "modrinth" {
+            let lowercase_name = plugin_name.to_lowercase();
+            if lowercase_name != plugin_name
+                && source_impl.validate_plugin_id(&lowercase_name).is_ok()
+            {
+                match source_impl
+                    .resolve_version(&lowercase_name, version, minecraft_version)
+                    .await
+                {
+                    Ok(_) => {
+                        return (source_name.to_string(), lowercase_name);
+                    }
+                    Err(_) => {
+                        // Continue searching
+                    }
+                }
+            }
+        }
+    }
+
+    // Not found in any source
+    ("unknown".to_string(), plugin_name.to_string())
 }
 
 fn scan_plugins_dir(plugins_dir: &str) -> anyhow::Result<Vec<ScannedPlugin>> {

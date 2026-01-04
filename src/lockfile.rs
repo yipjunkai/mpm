@@ -8,7 +8,7 @@ pub struct Lockfile {
     pub plugin: Vec<LockedPlugin>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockedPlugin {
     pub name: String,
     pub source: String,

@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         cli::Commands::Import => {
-            commands::import::import_plugins()?;
+            commands::import::import_plugins().await?;
         }
     }
 
