@@ -504,7 +504,7 @@ fn extract_version_from_filename(filename: &str) -> Option<String> {
     }
 
     // Basic validation: should start with a digit
-    if !version.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+    if !version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return None;
     }
 

@@ -2,7 +2,6 @@
 
 use crate::sources::source_trait::{PluginSource, ResolvedVersion};
 use async_trait::async_trait;
-use log::warn;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -64,7 +63,7 @@ impl PluginSource for GitHubSource {
         &self,
         plugin_id: &str,
         requested_version: Option<&str>,
-        minecraft_version: Option<&str>,
+        _minecraft_version: Option<&str>,
     ) -> anyhow::Result<ResolvedVersion> {
         // GitHub Releases don't have built-in Minecraft version metadata
         // Note: Warning about Minecraft version compatibility is logged once in lock/sync commands
