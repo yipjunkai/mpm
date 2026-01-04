@@ -3,7 +3,10 @@
 use crate::commands::lock;
 use crate::manifest::{Manifest, PluginSpec};
 use crate::sources::REGISTRY;
+use futures::future::join_all;
 use log::{debug, info};
+use std::time::Duration;
+use tokio::time::timeout;
 
 pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     // Parse spec format:
@@ -38,53 +41,83 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
         let source_impl = REGISTRY.get_or_error(source_str)?;
         (source_str, source_impl)
     } else {
-        // Search through sources in priority order
+        // Search through all sources in parallel with timeout
         let sources = REGISTRY.get_priority_order();
-        let mut last_error = None;
+        let timeout_duration = Duration::from_secs(180); // 3 minutes
 
-        for source_impl in sources {
-            let source_name = source_impl.name();
+        // Create futures for all sources with timeout
+        let futures: Vec<_> = sources
+            .iter()
+            .map(|source_impl| {
+                let source_name = source_impl.name();
+                let id = id.to_string();
+                let version_clone = version.clone();
+                let minecraft_version_clone: Option<String> =
+                    minecraft_version.map(|s| s.to_string());
 
-            // First, try to validate the plugin ID format (fast check)
-            if source_impl.validate_plugin_id(id).is_err() {
-                continue; // Skip this source if ID format doesn't match
-            }
+                async move {
+                    debug!("Searching source '{}' for plugin '{}'", source_name, id);
+                    let minecraft_version_ref: Option<&str> = minecraft_version_clone.as_deref();
+                    let result = timeout(
+                        timeout_duration,
+                        source_impl.resolve_version(
+                            &id,
+                            version_clone.as_deref(),
+                            minecraft_version_ref,
+                        ),
+                    )
+                    .await;
 
-            // Then try to resolve the version (confirms existence)
-            match source_impl
-                .resolve_version(id, version.as_deref(), minecraft_version)
-                .await
-            {
-                Ok(_) => {
-                    // Found it! Use this source
-                    debug!("Found plugin '{}' in source '{}'", id, source_name);
+                    match result {
+                        Ok(Ok(_)) => Ok((source_name, id)),
+                        Ok(Err(e)) => {
+                            debug!("Source '{}' failed for plugin '{}': {}", source_name, id, e);
+                            Err((source_name, e))
+                        }
+                        Err(_) => {
+                            debug!("Source '{}' timed out for plugin '{}'", source_name, id);
+                            Err((
+                                source_name,
+                                anyhow::anyhow!("Search timed out after 3 minutes"),
+                            ))
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        // Wait for all searches to complete/timeout
+        let results = join_all(futures).await;
+
+        // Find first successful result in priority order
+        let mut errors = Vec::new();
+        for result in results {
+            match result {
+                Ok((source_name, plugin_id)) => {
+                    debug!("Found plugin '{}' in source '{}'", plugin_id, source_name);
                     return add_plugin_to_manifest(
                         &mut manifest,
                         source_name,
-                        id,
+                        &plugin_id,
                         version,
                         no_update,
                     )
                     .await;
                 }
-                Err(e) => {
-                    // Store error but continue searching
-                    last_error = Some((source_name, e));
+                Err((source_name, err)) => {
+                    errors.push((source_name, err));
                 }
             }
         }
 
         // If we get here, plugin wasn't found in any source
-        let error_msg = if let Some((last_source, last_err)) = last_error {
+        let error_msg = if let Some((last_source, last_err)) = errors.first() {
             format!(
                 "Plugin '{}' not found in any source. Last attempted source '{}': {}",
                 id, last_source, last_err
             )
         } else {
-            format!(
-                "Plugin '{}' not found in any source. No source accepted the plugin ID format.",
-                id
-            )
+            format!("Plugin '{}' not found in any source.", id)
         };
         anyhow::bail!(error_msg);
     };

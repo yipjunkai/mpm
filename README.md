@@ -138,11 +138,12 @@ This ensures you only add plugins that will work with your server version.
 
 **Supported sources:**
 
-| Source     | Description                        | Format                                 | MC Version Check | Status       |
-| ---------- | ---------------------------------- | -------------------------------------- | ---------------- | ------------ |
-| `modrinth` | Modrinth plugin repository         | `plugin-id` or `plugin-id@version`     | ✅ Yes           | ✅ Available |
-| `hangar`   | Hangar (PaperMC plugin repository) | `author/slug` or `author/slug@version` | ✅ Yes           | ✅ Available |
-| `github`   | GitHub Releases                    | `owner/repo` or `owner/repo@tag`       | ⚠️ Warning only  | ✅ Available |
+| Source     | Description                        | Format                                 | MC Version Check |
+| ---------- | ---------------------------------- | -------------------------------------- | ---------------- |
+| `modrinth` | Modrinth plugin repository         | `plugin-id` or `plugin-id@version`     | ✅ Yes           |
+| `hangar`   | Hangar (PaperMC plugin repository) | `author/slug` or `author/slug@version` | ✅ Yes           |
+| `spigot`   | SpigotMC plugin repository         | `resource-id` or `resource-id@version` | ⚠️ Problematic   |
+| `github`   | GitHub Releases                    | `owner/repo` or `owner/repo@tag`       | ⚠️ Warning only  |
 
 **Note:** GitHub Releases don't include Minecraft version metadata, so compatibility cannot be automatically verified. A warning will be displayed when adding GitHub plugins.
 

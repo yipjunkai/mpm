@@ -5,12 +5,16 @@ use crate::constants;
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::{Manifest, MinecraftSpec, PluginSpec};
 use crate::sources::REGISTRY;
+use futures::future::join_all;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 /// Plugin information scanned from the plugins directory
 /// Tuple contains: (name, filename, version_option, hash)
@@ -203,108 +207,141 @@ async fn find_plugin_source(
     minecraft_version: Option<&str>,
 ) -> Option<(String, String)> {
     let sources = REGISTRY.get_priority_order();
-    let sources_count = sources.len();
+    let timeout_duration = Duration::from_secs(180); // 3 minutes
 
-    for source_impl in sources {
-        let source_name = source_impl.name();
-
+    // Helper function to create a search future
+    async fn search_source(
+        source_impl: std::sync::Arc<dyn crate::sources::PluginSource>,
+        source_name: &'static str,
+        search_id: String,
+        version: Option<String>,
+        minecraft_version: Option<String>,
+        timeout_duration: Duration,
+        priority: usize,
+    ) -> Result<(String, String, usize), (String, String, usize)> {
         debug!(
-            "Trying source: plugin={}, source={}",
-            plugin_name, source_name
+            "Searching source '{}' for plugin '{}'",
+            source_name, search_id
         );
 
-        // Try the plugin name as-is first (this will use search for Hangar/GitHub if needed)
-        if source_impl.validate_plugin_id(plugin_name).is_ok() {
-            // First try with the exact version from plugin.yml if provided
-            let mut resolved = source_impl
-                .resolve_version(plugin_name, version, minecraft_version)
-                .await;
+        // First try with the exact version from plugin.yml if provided
+        let minecraft_version_ref: Option<&str> = minecraft_version.as_deref();
+        let resolved_future =
+            source_impl.resolve_version(&search_id, version.as_deref(), minecraft_version_ref);
 
-            // If exact version failed and we have both a version and minecraft_version,
-            // try again without the version constraint to find the latest compatible version
-            if resolved.is_err() && version.is_some() && minecraft_version.is_some() {
-                debug!(
-                    "Exact version not compatible, trying latest compatible version: plugin={}, source={}",
-                    plugin_name, source_name
-                );
-                resolved = source_impl
-                    .resolve_version(plugin_name, None, minecraft_version)
-                    .await;
-            }
+        let result = timeout(timeout_duration, resolved_future).await;
 
-            match resolved {
-                Ok(_) => {
-                    debug!(
-                        "Plugin found in source: plugin={}, source={}",
-                        plugin_name, source_name
-                    );
-
-                    // Found it!
-                    return Some((source_name.to_string(), plugin_name.to_string()));
-                }
-                Err(e) => {
-                    debug!(
-                        "resolve_version failed: plugin={}, source={}, error={}",
-                        plugin_name, source_name, e
-                    );
-                    // Continue searching
-                }
-            }
-        }
-
-        // For Modrinth, try lowercase version
-        if source_name == "modrinth" {
-            let lowercase_name = plugin_name.to_lowercase();
-            if lowercase_name != plugin_name
-                && source_impl.validate_plugin_id(&lowercase_name).is_ok()
-            {
-                debug!(
-                    "Trying lowercase variant for Modrinth: plugin={}, lowercase={}",
-                    plugin_name, lowercase_name
-                );
-
-                // First try with the exact version from plugin.yml if provided
-                let mut resolved = source_impl
-                    .resolve_version(&lowercase_name, version, minecraft_version)
-                    .await;
-
+        match result {
+            Ok(Ok(_)) => Ok((source_name.to_string(), search_id.clone(), priority)),
+            Ok(Err(e)) => {
                 // If exact version failed and we have both a version and minecraft_version,
                 // try again without the version constraint to find the latest compatible version
-                if resolved.is_err() && version.is_some() && minecraft_version.is_some() {
+                if version.is_some() && minecraft_version.is_some() {
                     debug!(
-                        "Exact version not compatible (lowercase), trying latest compatible version: plugin={}, lowercase={}, source={}",
-                        plugin_name, lowercase_name, source_name
+                        "Exact version not compatible, trying latest compatible version: plugin={}, source={}",
+                        search_id, source_name
                     );
-                    resolved = source_impl
-                        .resolve_version(&lowercase_name, None, minecraft_version)
-                        .await;
-                }
-
-                match resolved {
-                    Ok(_) => {
-                        debug!(
-                            "Plugin found (lowercase variant): plugin={}, lowercase={}, source={}",
-                            plugin_name, lowercase_name, source_name
-                        );
-                        return Some((source_name.to_string(), lowercase_name));
+                    let minecraft_version_ref: Option<&str> = minecraft_version.as_deref();
+                    let retry_future =
+                        source_impl.resolve_version(&search_id, None, minecraft_version_ref);
+                    let retry_result = timeout(timeout_duration, retry_future).await;
+                    match retry_result {
+                        Ok(Ok(_)) => Ok((source_name.to_string(), search_id.clone(), priority)),
+                        Ok(Err(_)) | Err(_) => {
+                            Err((source_name.to_string(), search_id.clone(), priority))
+                        }
                     }
-                    Err(e) => {
-                        debug!(
-                            "resolve_version failed (lowercase): lowercase={}, source={}, error={}",
-                            lowercase_name, source_name, e
-                        );
-                        // Continue searching
-                    }
+                } else {
+                    debug!(
+                        "resolve_version failed: plugin={}, source={}, error={}",
+                        search_id, source_name, e
+                    );
+                    Err((source_name.to_string(), search_id.clone(), priority))
                 }
+            }
+            Err(_) => {
+                debug!(
+                    "Source '{}' timed out for plugin '{}'",
+                    source_name, search_id
+                );
+                Err((source_name.to_string(), search_id.clone(), priority))
             }
         }
     }
 
+    // Create futures for all sources
+    let mut futures = Vec::new();
+    for (idx, source_impl) in sources.iter().enumerate() {
+        let source_name = source_impl.name();
+        let plugin_name_str = plugin_name.to_string();
+        let source_impl_clone = Arc::clone(source_impl);
+        let version_clone = version.map(|s| s.to_string());
+        let minecraft_version_clone = minecraft_version.map(|s| s.to_string());
+        let timeout_duration_clone = timeout_duration;
+
+        // Add regular search future
+        let search_id = plugin_name_str.clone();
+        let priority = idx * 2; // Use even numbers for regular searches
+        futures.push(search_source(
+            source_impl_clone.clone(),
+            source_name,
+            search_id,
+            version_clone,
+            minecraft_version_clone,
+            timeout_duration_clone,
+            priority,
+        ));
+
+        // For Modrinth, also try lowercase version
+        if source_name == "modrinth" {
+            let lowercase_name = plugin_name.to_lowercase();
+            if lowercase_name != plugin_name {
+                let source_impl_clone_lower = Arc::clone(source_impl);
+                let version_clone_lower = version.map(|s| s.to_string());
+                let minecraft_version_clone_lower = minecraft_version.map(|s| s.to_string());
+                let timeout_duration_clone_lower = timeout_duration;
+                let search_id_lower = lowercase_name.clone();
+                let priority_lower = idx * 2 + 1; // Use odd numbers for lowercase searches
+
+                futures.push(search_source(
+                    source_impl_clone_lower.clone(),
+                    source_name,
+                    search_id_lower,
+                    version_clone_lower,
+                    minecraft_version_clone_lower,
+                    timeout_duration_clone_lower,
+                    priority_lower,
+                ));
+            }
+        }
+    }
+
+    // Wait for all searches to complete/timeout
+    let results = join_all(futures).await;
+
+    // Find first successful result in priority order (lower priority number = higher priority)
+    let mut successful_results: Vec<_> = results
+        .into_iter()
+        .filter_map(|result| match result {
+            Ok((source_name, plugin_id, priority)) => Some((source_name, plugin_id, priority)),
+            Err(_) => None,
+        })
+        .collect();
+
+    // Sort by priority (lower number = higher priority)
+    successful_results.sort_by_key(|(_, _, priority)| *priority);
+
+    // Return the first successful result
+    if let Some((source_name, plugin_id, _)) = successful_results.first() {
+        debug!(
+            "Plugin found in source: plugin={}, source={}, plugin_id={}",
+            plugin_name, source_name, plugin_id
+        );
+        return Some((source_name.to_string(), plugin_id.clone()));
+    }
+
     // Not found in any source
-    debug!(
-        "Plugin not found in any source: plugin={}, sources_tried={}",
-        plugin_name, sources_count
-    );
+    debug!("Plugin not found in any source: plugin={}", plugin_name);
 
     None
 }
