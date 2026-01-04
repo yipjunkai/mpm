@@ -7,11 +7,13 @@ pub mod github;
 pub mod hangar;
 pub mod modrinth;
 pub mod source_trait;
+pub mod spigot;
 pub mod version_matcher;
 
 pub use github::GitHubSource;
 pub use hangar::HangarSource;
 pub use modrinth::ModrinthSource;
+pub use spigot::SpigotSource;
 
 // Re-export the trait and types
 #[allow(unused_imports)] // ResolvedVersion is part of the public API
@@ -29,9 +31,10 @@ impl SourceRegistry {
         };
 
         // Register all sources in priority order
-        // Priority: modrinth > hangar > github
+        // Priority: modrinth > hangar > spigot > github
         registry.register(Arc::new(ModrinthSource));
         registry.register(Arc::new(HangarSource));
+        registry.register(Arc::new(SpigotSource));
         registry.register(Arc::new(GitHubSource));
 
         registry
@@ -60,7 +63,7 @@ impl SourceRegistry {
     }
 
     /// Get sources in priority order for searching
-    /// Priority: modrinth > hangar > github
+    /// Priority: modrinth > hangar > spigot > github
     pub fn get_priority_order(&self) -> Vec<&Arc<dyn PluginSource>> {
         let mut sources = Vec::new();
         // Add sources in priority order
@@ -68,6 +71,9 @@ impl SourceRegistry {
             sources.push(source);
         }
         if let Some(source) = self.get("hangar") {
+            sources.push(source);
+        }
+        if let Some(source) = self.get("spigot") {
             sources.push(source);
         }
         if let Some(source) = self.get("github") {

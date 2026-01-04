@@ -8,7 +8,7 @@ mpm is a native Rust-based CLI for Minecraft servers. It brings modern DevOps pr
 
 - **Manifest-Driven:** Define your environment in `plugins.toml` and eliminate manual `.jar` hunting.
 - **Reproducible Installs:** A `plugins.lock` ensures every setup is bit-for-bit identical across all environments.
-- **Multi-Source:** Native integration with **Modrinth**, **Hangar**, and **GitHub Releases** APIs. SpigotMC support coming soon.
+- **Multi-Source:** Native integration with **Modrinth**, **Hangar**, **SpigotMC**, and **GitHub Releases** APIs.
 
 ### 🛡️ Safety & Reliability
 
@@ -18,7 +18,6 @@ mpm is a native Rust-based CLI for Minecraft servers. It brings modern DevOps pr
 
 ## 🚀 Coming Soon (In no particular order)
 
-- [ ] **SpigotMC Integration:** Support for downloading plugins from SpigotMC's plugin repository with Minecraft version compatibility checking.
 - [ ] **Bukkit Integration:** Support for downloading plugins from the Bukkit plugin repository.
 - [ ] **Polymart Integration:** Support for downloading plugins from the Polymart plugin marketplace.
 - [ ] **CurseForge Integration:** Support for downloading plugins and mods from CurseForge.
