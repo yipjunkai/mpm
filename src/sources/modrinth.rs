@@ -39,7 +39,21 @@ pub struct FileHashes {
 
 async fn get_plugin(slug: &str) -> anyhow::Result<Project> {
     let url = format!("https://api.modrinth.com/v2/project/{}", slug);
-    let plugin = reqwest::get(url).await?.json().await?;
+    let response = reqwest::get(&url).await?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        anyhow::bail!("Plugin '{}' not found in Modrinth", slug);
+    }
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Failed to fetch Modrinth plugin '{}': HTTP {}",
+            slug,
+            response.status()
+        );
+    }
+
+    let plugin = response.json().await?;
     Ok(plugin)
 }
 

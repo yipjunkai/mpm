@@ -68,43 +68,88 @@ impl PluginSource for GitHubSource {
         let owner = parts[0];
         let repo = parts[1];
 
+        // First verify the repository exists
+        let repo_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+        let repo_response = reqwest::get(&repo_url).await?;
+
+        if repo_response.status() == reqwest::StatusCode::NOT_FOUND {
+            anyhow::bail!("Repository '{}/{}' not found on GitHub", owner, repo);
+        }
+
+        if !repo_response.status().is_success() {
+            anyhow::bail!(
+                "Failed to fetch GitHub repository '{}/{}': HTTP {}",
+                owner,
+                repo,
+                repo_response.status()
+            );
+        }
+
         let release = if let Some(version_str) = requested_version {
             // Get specific release by tag
             let url = format!(
                 "https://api.github.com/repos/{}/{}/releases/tags/{}",
                 owner, repo, version_str
             );
-            reqwest::get(&url)
-                .await?
-                .json::<Release>()
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to fetch GitHub release '{}' for '{}/{}': {}",
-                        version_str,
-                        owner,
-                        repo,
-                        e
-                    )
-                })?
+            let response = reqwest::get(&url).await?;
+
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                anyhow::bail!(
+                    "Release '{}' not found for repository '{}/{}'",
+                    version_str,
+                    owner,
+                    repo
+                );
+            }
+
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "Failed to fetch GitHub release '{}' for '{}/{}': HTTP {}",
+                    version_str,
+                    owner,
+                    repo,
+                    response.status()
+                );
+            }
+
+            response.json::<Release>().await.map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse GitHub release '{}' for '{}/{}': {}",
+                    version_str,
+                    owner,
+                    repo,
+                    e
+                )
+            })?
         } else {
             // Get latest release
             let url = format!(
                 "https://api.github.com/repos/{}/{}/releases/latest",
                 owner, repo
             );
-            reqwest::get(&url)
-                .await?
-                .json::<Release>()
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to fetch latest GitHub release for '{}/{}': {}",
-                        owner,
-                        repo,
-                        e
-                    )
-                })?
+            let response = reqwest::get(&url).await?;
+
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                anyhow::bail!("No releases found for repository '{}/{}'", owner, repo);
+            }
+
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "Failed to fetch latest GitHub release for '{}/{}': HTTP {}",
+                    owner,
+                    repo,
+                    response.status()
+                );
+            }
+
+            response.json::<Release>().await.map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse latest GitHub release for '{}/{}': {}",
+                    owner,
+                    repo,
+                    e
+                )
+            })?
         };
 
         // Find the first .jar file in assets

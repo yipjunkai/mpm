@@ -8,7 +8,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 struct Project {
     #[allow(dead_code)] // Required for deserialization but not used
-    id: String,
+    id: i64,
     #[allow(dead_code)] // Required for deserialization but not used
     name: String,
     #[allow(dead_code)] // Required for deserialization but not used
@@ -99,11 +99,25 @@ impl PluginSource for HangarSource {
             "https://hangar.papermc.io/api/v1/projects/{}/{}",
             author, slug
         );
-        let _plugin: Project = reqwest::get(&plugin_url)
-            .await?
+        let response = reqwest::get(&plugin_url).await?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            anyhow::bail!("Plugin '{}/{}' not found in Hangar", author, slug);
+        }
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Failed to fetch Hangar plugin '{}/{}': HTTP {}",
+                author,
+                slug,
+                response.status()
+            );
+        }
+
+        let _plugin: Project = response
             .json()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar plugin: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse Hangar plugin response: {}", e))?;
 
         // Get all versions
         let versions_url = format!(
