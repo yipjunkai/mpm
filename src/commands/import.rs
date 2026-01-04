@@ -103,7 +103,7 @@ pub async fn import_plugins(version: Option<String>) -> anyhow::Result<()> {
     let mut lockfile_plugins = Vec::new();
 
     let mut skipped_plugins = Vec::new();
-    for (name, filename, version_option, hash) in &plugins {
+    for (name, filename, version_option, _hash) in &plugins {
         debug!(
             "Searching for plugin: name={}, filename={}, version={:?}",
             name, filename, version_option
@@ -111,7 +111,7 @@ pub async fn import_plugins(version: Option<String>) -> anyhow::Result<()> {
 
         // Try to find the plugin in sources using search functionality
         match find_plugin_source(name, version_option.as_deref(), minecraft_version).await {
-            Some((source, plugin_id)) => {
+            Some((source, plugin_id, resolved)) => {
                 debug!(
                     "Plugin found in source: name={}, source={}, plugin_id={}",
                     name, source, plugin_id
@@ -126,17 +126,15 @@ pub async fn import_plugins(version: Option<String>) -> anyhow::Result<()> {
                     },
                 );
 
-                // Add to lockfile with local file info
-                // The URL and hash will be updated when user runs 'lock' command
-                // We use the local file hash for now to maintain integrity
-                let source_clone = source.clone();
+                // Use resolved URL and hash from the source, but keep local filename
+                // since that's what the user actually has in their plugins directory
                 lockfile_plugins.push(LockedPlugin {
                     name: name.clone(),
                     source,
-                    version: version_option.clone().unwrap_or_else(|| filename.clone()),
-                    file: filename.clone(),
-                    url: format!("{}://{}", source_clone, plugin_id), // Placeholder, will be resolved during lock
-                    hash: hash.clone(), // Local file hash, will be updated during lock
+                    version: resolved.version.clone(),
+                    file: filename.clone(),      // Keep local filename
+                    url: resolved.url.clone(),   // Use resolved URL
+                    hash: resolved.hash.clone(), // Use resolved hash
                 });
             }
             None => {
@@ -200,12 +198,12 @@ pub async fn import_plugins(version: Option<String>) -> anyhow::Result<()> {
 }
 
 /// Search for a plugin across all sources in priority order
-/// Returns Some((source_name, plugin_id)) if found, None otherwise
+/// Returns Some((source_name, plugin_id, resolved_version)) if found, None otherwise
 async fn find_plugin_source(
     plugin_name: &str,
     version: Option<&str>,
     minecraft_version: Option<&str>,
-) -> Option<(String, String)> {
+) -> Option<(String, String, crate::sources::ResolvedVersion)> {
     let sources = REGISTRY.get_priority_order();
     let timeout_duration = Duration::from_secs(180); // 3 minutes
 
@@ -218,7 +216,8 @@ async fn find_plugin_source(
         minecraft_version: Option<String>,
         timeout_duration: Duration,
         priority: usize,
-    ) -> Result<(String, String, usize), (String, String, usize)> {
+    ) -> Result<(String, String, crate::sources::ResolvedVersion, usize), (String, String, usize)>
+    {
         debug!(
             "Searching source '{}' for plugin '{}'",
             source_name, search_id
@@ -232,7 +231,12 @@ async fn find_plugin_source(
         let result = timeout(timeout_duration, resolved_future).await;
 
         match result {
-            Ok(Ok(_)) => Ok((source_name.to_string(), search_id.clone(), priority)),
+            Ok(Ok(resolved)) => Ok((
+                source_name.to_string(),
+                search_id.clone(),
+                resolved,
+                priority,
+            )),
             Ok(Err(e)) => {
                 // If exact version failed and we have both a version and minecraft_version,
                 // try again without the version constraint to find the latest compatible version
@@ -246,7 +250,12 @@ async fn find_plugin_source(
                         source_impl.resolve_version(&search_id, None, minecraft_version_ref);
                     let retry_result = timeout(timeout_duration, retry_future).await;
                     match retry_result {
-                        Ok(Ok(_)) => Ok((source_name.to_string(), search_id.clone(), priority)),
+                        Ok(Ok(resolved)) => Ok((
+                            source_name.to_string(),
+                            search_id.clone(),
+                            resolved,
+                            priority,
+                        )),
                         Ok(Err(_)) | Err(_) => {
                             Err((source_name.to_string(), search_id.clone(), priority))
                         }
@@ -323,21 +332,23 @@ async fn find_plugin_source(
     let mut successful_results: Vec<_> = results
         .into_iter()
         .filter_map(|result| match result {
-            Ok((source_name, plugin_id, priority)) => Some((source_name, plugin_id, priority)),
+            Ok((source_name, plugin_id, resolved, priority)) => {
+                Some((source_name, plugin_id, resolved, priority))
+            }
             Err(_) => None,
         })
         .collect();
 
     // Sort by priority (lower number = higher priority)
-    successful_results.sort_by_key(|(_, _, priority)| *priority);
+    successful_results.sort_by_key(|(_, _, _, priority)| *priority);
 
     // Return the first successful result
-    if let Some((source_name, plugin_id, _)) = successful_results.first() {
+    if let Some((source_name, plugin_id, resolved, _)) = successful_results.first() {
         debug!(
             "Plugin found in source: plugin={}, source={}, plugin_id={}",
             plugin_name, source_name, plugin_id
         );
-        return Some((source_name.to_string(), plugin_id.clone()));
+        return Some((source_name.to_string(), plugin_id.clone(), resolved.clone()));
     }
 
     // Not found in any source

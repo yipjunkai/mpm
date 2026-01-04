@@ -1592,7 +1592,11 @@ fn test_import_creates_manifest_and_lockfile() {
     assert!(lockfile_content.contains("worldedit"));
     assert!(lockfile_content.contains("worldedit.jar"));
     assert!(lockfile_content.contains("modrinth"));
-    assert!(lockfile_content.contains("sha256:"));
+    // Accept either sha256 or sha512 hash format (Modrinth uses sha512)
+    assert!(
+        lockfile_content.contains("sha256:") || lockfile_content.contains("sha512:"),
+        "Lockfile should contain a hash (sha256 or sha512)"
+    );
 }
 
 #[test]
