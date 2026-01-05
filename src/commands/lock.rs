@@ -41,13 +41,37 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
         source.validate_plugin_id(&plugin_spec.id)?;
 
         // Resolve version using the trait
-        let resolved = source
+        let resolved = match source
             .resolve_version(
                 &plugin_spec.id,
                 plugin_spec.version.as_deref(),
                 minecraft_version,
             )
-            .await?;
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                // If exact version failed due to incompatibility and we have both a version
+                // constraint and minecraft_version, try again without the version constraint
+                // to find the latest compatible version
+                if plugin_spec.version.is_some()
+                    && minecraft_version.is_some()
+                    && e.to_string().contains("is not compatible with Minecraft")
+                {
+                    warn!(
+                        "Plugin '{}' version '{}' is not compatible with Minecraft {}. Trying latest compatible version...",
+                        name,
+                        plugin_spec.version.as_deref().unwrap(),
+                        manifest.minecraft.version
+                    );
+                    source
+                        .resolve_version(&plugin_spec.id, None, minecraft_version)
+                        .await?
+                } else {
+                    return Err(e);
+                }
+            }
+        };
 
         lockfile.add_plugin(LockedPlugin {
             name: name.clone(),
