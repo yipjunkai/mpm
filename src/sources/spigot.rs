@@ -7,6 +7,15 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
+struct ResourceFile {
+    #[allow(dead_code)] // May be useful for future enhancements
+    #[serde(rename = "type")]
+    file_type: Option<String>,
+    #[serde(rename = "externalUrl")]
+    external_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct Resource {
     #[allow(dead_code)] // Required for deserialization but not used
     id: i64,
@@ -14,6 +23,7 @@ struct Resource {
     #[serde(rename = "testedVersions")]
     #[allow(dead_code)] // Used in filtering but may not always be present
     tested_versions: Option<Vec<String>>,
+    file: Option<ResourceFile>,
 }
 
 // Spiget search API returns an array directly, not an object
@@ -82,7 +92,7 @@ impl PluginSource for SpigotSource {
             );
         }
 
-        let _resource: Resource = response
+        let resource: Resource = response
             .json()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to parse Spigot resource response: {}", e))?;
@@ -220,14 +230,24 @@ impl PluginSource for SpigotSource {
             versions.first().unwrap()
         };
 
-        // Build download URL: /resources/{resourceId}/versions/{versionId}/download
+        // Spiget API doesn't provide hashes, so we need to download and compute SHA-256
+        // First, try the Spiget download endpoint
         let download_url = format!(
             "https://api.spiget.org/v2/resources/{}/versions/{}/download",
             resource_id, version.id
         );
 
-        // Spiget API doesn't provide hashes, so we need to download and compute SHA-256
-        let response = reqwest::get(&download_url).await?;
+        let mut response = reqwest::get(&download_url).await?;
+
+        // If the download failed, try external URL as fallback
+        if !response.status().is_success()
+            && let Some(file) = &resource.file
+            && let Some(external_url) = &file.external_url
+        {
+            // Try external URL as fallback
+            response = reqwest::get(external_url).await?;
+        }
+
         if !response.status().is_success() {
             anyhow::bail!(
                 "Failed to download resource '{}' version '{}': HTTP {}",

@@ -145,7 +145,10 @@ This ensures you only add plugins that will work with your server version.
 | `spigot`   | SpigotMC plugin repository         | `resource-id` or `resource-id@version` | ⚠️ Problematic   |
 | `github`   | GitHub Releases                    | `owner/repo` or `owner/repo@tag`       | ⚠️ Warning only  |
 
-**Note:** GitHub Releases don't include Minecraft version metadata, so compatibility cannot be automatically verified. A warning will be displayed when adding GitHub plugins.
+**Notes:**
+
+- **GitHub Releases:** Don't include Minecraft version metadata, so compatibility cannot be automatically verified. A warning will be displayed when adding GitHub plugins.
+- **SpigotMC:** The tool first attempts to download from the Spiget API endpoint. If that fails, it automatically falls back to external download URLs (e.g., GitHub releases) when available.
 
 #### `mpm remove <name> [--no-update]`
 
