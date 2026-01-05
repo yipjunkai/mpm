@@ -240,12 +240,58 @@ impl PluginSource for SpigotSource {
         let mut response = reqwest::get(&download_url).await?;
 
         // If the download failed, try external URL as fallback
+        let mut used_external_url = false;
+        let mut final_url = download_url.clone();
         if !response.status().is_success()
             && let Some(file) = &resource.file
             && let Some(external_url) = &file.external_url
         {
-            // Try external URL as fallback
-            response = reqwest::get(external_url).await?;
+            // Try external URL directly
+            let external_response = reqwest::get(external_url).await?;
+
+            if !external_response.status().is_success() {
+                anyhow::bail!(
+                    "Failed to download resource '{}' version '{}' from external URL '{}': HTTP {}",
+                    resource_id,
+                    version.name,
+                    external_url,
+                    external_response.status()
+                );
+            }
+
+            // Check if the response is actually a JAR file
+            // Only accept application/java-archive or application/x-java-archive content types
+            // Or if URL ends with .jar (and we'll verify it's actually a JAR when we download it)
+            let content_type = external_response
+                .headers()
+                .get("content-type")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("")
+                .to_lowercase();
+
+            let is_jar_file = content_type.starts_with("application/java-archive")
+                || content_type.starts_with("application/x-java-archive")
+                || external_url.ends_with(".jar"); // If URL ends with .jar, assume it's a JAR file
+
+            if !is_jar_file {
+                anyhow::bail!(
+                    "External URL '{}' for resource '{}' version '{}' does not point to a JAR file (Content-Type: {}). \
+                    Please ensure the external URL points directly to a .jar file download.",
+                    external_url,
+                    resource_id,
+                    version.name,
+                    if content_type.is_empty() {
+                        "not specified"
+                    } else {
+                        &content_type
+                    }
+                );
+            }
+
+            // External URL looks good, use it
+            response = external_response;
+            used_external_url = true;
+            final_url = external_url.clone();
         }
 
         if !response.status().is_success() {
@@ -296,7 +342,11 @@ impl PluginSource for SpigotSource {
         Ok(ResolvedVersion {
             version: version.name.clone(),
             filename,
-            url: download_url,
+            url: if used_external_url {
+                final_url
+            } else {
+                download_url
+            },
             hash,
         })
     }
