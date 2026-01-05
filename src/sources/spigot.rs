@@ -249,6 +249,21 @@ impl PluginSource for SpigotSource {
         }
 
         if !response.status().is_success() {
+            // Check if it's a 403 and no external URL was available
+            if response.status() == reqwest::StatusCode::FORBIDDEN {
+                let has_external = resource
+                    .file
+                    .as_ref()
+                    .and_then(|f| f.external_url.as_ref())
+                    .is_some();
+                if !has_external {
+                    anyhow::bail!(
+                        "SpigotMC uses Cloudflare protection that blocks automated downloads, and this resource doesn't have an external download URL. \
+                        Please download the plugin manually from https://www.spigotmc.org/resources/{}/ and add it to your server.",
+                        resource_id
+                    );
+                }
+            }
             anyhow::bail!(
                 "Failed to download resource '{}' version '{}': HTTP {}",
                 resource_id,
