@@ -34,7 +34,11 @@ async fn main() -> anyhow::Result<()> {
         Some(cli::Commands::Init { version }) => {
             commands::init::init(version)?;
         }
-        Some(cli::Commands::Add { spec, no_update, skip_compatibility }) => {
+        Some(cli::Commands::Add {
+            spec,
+            no_update,
+            skip_compatibility,
+        }) => {
             commands::add::add(spec, no_update, skip_compatibility).await?;
         }
         Some(cli::Commands::Remove { spec, no_update }) => {

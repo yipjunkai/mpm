@@ -3,7 +3,9 @@
 use crate::sources::source_trait::{PluginSource, ResolvedVersion};
 use crate::sources::version_matcher;
 use async_trait::async_trait;
+use hex;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
 struct Project {
@@ -43,16 +45,18 @@ struct Version {
 #[derive(Debug, Clone, Deserialize)]
 struct Download {
     #[serde(rename = "fileInfo")]
-    file_info: FileInfo,
+    file_info: Option<FileInfo>,
     #[serde(rename = "downloadUrl")]
-    download_url: String,
+    download_url: Option<String>,
+    #[serde(rename = "externalUrl")]
+    external_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct FileInfo {
-    name: String,
+    name: Option<String>,
     #[serde(rename = "sha256Hash")]
-    sha256_hash: String,
+    sha256_hash: Option<String>,
 }
 
 pub struct HangarSource;
@@ -259,26 +263,106 @@ impl PluginSource for HangarSource {
         };
 
         // Get the primary download - prefer PAPER platform, fallback to first available
+        // Filter out downloads with null fileInfo, downloadUrl, or fileInfo fields
+        // Find a valid download - prefer PAPER platform, fallback to first available
+        // Valid download has either download_url or external_url
         let download = version
             .downloads
             .get("PAPER")
-            .or_else(|| version.downloads.values().next())
+            .filter(|d| d.download_url.is_some() || d.external_url.is_some())
+            .or_else(|| {
+                version
+                    .downloads
+                    .values()
+                    .find(|d| d.download_url.is_some() || d.external_url.is_some())
+            })
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "No downloads found for version '{}' of plugin '{}/{}'",
+                    "No downloads with download URL or external URL found for version '{}' of plugin '{}/{}'",
                     version.name,
                     author,
                     slug
                 )
             })?;
 
-        // Use SHA-256 from Hangar API and format as UV-style hash (algorithm:hash)
-        let hash = format!("sha256:{}", download.file_info.sha256_hash);
+        // Prefer download_url, fallback to external_url
+        let download_url = download
+            .download_url
+            .as_ref()
+            .or(download.external_url.as_ref())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Download URL is null for version '{}' of plugin '{}/{}'",
+                    version.name,
+                    author,
+                    slug
+                )
+            })?;
+
+        // Handle filename and hash - prefer from fileInfo if available
+        let (filename, hash) = if let Some(file_info) = &download.file_info {
+            if let (Some(name), Some(sha256_hash)) = (&file_info.name, &file_info.sha256_hash) {
+                // Use fileInfo if available
+                (name.clone(), format!("sha256:{}", sha256_hash))
+            } else {
+                // fileInfo exists but is missing fields
+                anyhow::bail!(
+                    "Download file info incomplete for version '{}' of plugin '{}/{}'",
+                    version.name,
+                    author,
+                    slug
+                );
+            }
+        } else {
+            // fileInfo is null - download file to compute hash (similar to Spigot/GitHub sources)
+            let response = reqwest::get(download_url).await?;
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "Failed to download plugin '{}/{}' version '{}': HTTP {}",
+                    author,
+                    slug,
+                    version.name,
+                    response.status()
+                );
+            }
+
+            // Extract filename from URL or Content-Disposition header
+            let filename_from_url = response
+                .headers()
+                .get("content-disposition")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| {
+                    s.split("filename=")
+                        .nth(1)
+                        .and_then(|f| f.trim_matches('"').split(';').next())
+                        .map(|f| f.trim_matches('"').to_string())
+                })
+                .unwrap_or_else(|| {
+                    download_url
+                        .split('/')
+                        .next_back()
+                        .unwrap_or(&format!("{}.jar", version.name))
+                        .split('?')
+                        .next()
+                        .unwrap_or(&format!("{}.jar", version.name))
+                        .to_string()
+                });
+
+            let data = response.bytes().await?;
+
+            // Compute SHA-256 hash
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            let hash_hex = hex::encode(hasher.finalize());
+            let hash = format!("sha256:{}", hash_hex);
+
+            (filename_from_url, hash)
+        };
 
         Ok(ResolvedVersion {
             version: version.name.clone(),
-            filename: download.file_info.name.clone(),
-            url: download.download_url.clone(),
+            filename,
+            url: download_url.clone(),
             hash,
         })
     }
