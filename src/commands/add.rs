@@ -8,7 +8,7 @@ use log::{debug, info};
 use std::time::Duration;
 use tokio::time::timeout;
 
-pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
+pub async fn add(spec: String, no_update: bool, skip_compatibility: bool) -> anyhow::Result<()> {
     // Parse spec format:
     // - source:id or source:id@version (e.g., modrinth:fabric-api)
     // - id or id@version (searches through all sources in priority order)
@@ -33,7 +33,11 @@ pub async fn add(spec: String, no_update: bool) -> anyhow::Result<()> {
     let mut manifest = Manifest::load()
         .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
 
-    let minecraft_version = Some(manifest.minecraft.version.as_str());
+    let minecraft_version = if skip_compatibility {
+        None
+    } else {
+        Some(manifest.minecraft.version.as_str())
+    };
 
     // If source is specified, use it directly
     // Otherwise, search through all sources in priority order

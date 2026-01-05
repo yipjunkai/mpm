@@ -51,6 +51,9 @@ pub enum Commands {
         /// Skip automatic lockfile update after adding
         #[arg(long)]
         no_update: bool,
+        /// Skip Minecraft version compatibility check
+        #[arg(long)]
+        skip_compatibility: bool,
     },
     /// Remove a plugin from the manifest
     ///
