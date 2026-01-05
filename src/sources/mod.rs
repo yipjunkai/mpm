@@ -63,14 +63,14 @@ impl SourceRegistry {
     }
 
     /// Get sources in priority order for searching
-    /// Priority: modrinth > hangar > spigot > github
+    /// Priority: hangar > modrinth > spigot > github
     pub fn get_priority_order(&self) -> Vec<&Arc<dyn PluginSource>> {
         let mut sources = Vec::new();
         // Add sources in priority order
-        if let Some(source) = self.get("modrinth") {
+        if let Some(source) = self.get("hangar") {
             sources.push(source);
         }
-        if let Some(source) = self.get("hangar") {
+        if let Some(source) = self.get("modrinth") {
             sources.push(source);
         }
         if let Some(source) = self.get("spigot") {

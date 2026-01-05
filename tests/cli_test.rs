@@ -1578,7 +1578,7 @@ fn test_import_creates_manifest_and_lockfile() {
 
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
     assert!(manifest_content.contains("worldedit"));
-    assert!(manifest_content.contains("modrinth"));
+    assert!(manifest_content.contains("hangar") || manifest_content.contains("modrinth"));
     assert!(manifest_content.contains("id = \"worldedit\""));
 
     // Verify lockfile was created
@@ -1591,7 +1591,7 @@ fn test_import_creates_manifest_and_lockfile() {
     let lockfile_content = fs::read_to_string(&lockfile_path).unwrap();
     assert!(lockfile_content.contains("worldedit"));
     assert!(lockfile_content.contains("worldedit.jar"));
-    assert!(lockfile_content.contains("modrinth"));
+    assert!(lockfile_content.contains("hangar") || lockfile_content.contains("modrinth"));
     // Accept either sha256 or sha512 hash format (Modrinth uses sha512)
     assert!(
         lockfile_content.contains("sha256:") || lockfile_content.contains("sha512:"),

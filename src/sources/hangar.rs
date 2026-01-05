@@ -36,20 +36,12 @@ struct Version {
     #[serde(rename = "createdAt")]
     created_at: String,
     #[serde(rename = "platformDependencies")]
-    platform_dependencies: Vec<PlatformDependency>,
-    downloads: Vec<Download>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PlatformDependency {
-    #[allow(dead_code)] // Used in filtering logic via iterator
-    name: String,
-    version: String,
+    platform_dependencies: std::collections::HashMap<String, Vec<String>>,
+    downloads: std::collections::HashMap<String, Download>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct Download {
-    name: String,
     #[serde(rename = "fileInfo")]
     file_info: FileInfo,
     #[serde(rename = "downloadUrl")]
@@ -58,6 +50,7 @@ struct Download {
 
 #[derive(Debug, Clone, Deserialize)]
 struct FileInfo {
+    name: String,
     #[serde(rename = "sha256Hash")]
     sha256_hash: String,
 }
@@ -135,20 +128,32 @@ impl PluginSource for HangarSource {
             "https://hangar.papermc.io/api/v1/projects/{}/{}/versions",
             author, slug
         );
-        let all_versions: Vec<Version> = reqwest::get(&versions_url)
+
+        #[derive(Debug, Deserialize)]
+        struct VersionsResponse {
+            result: Vec<Version>,
+        }
+
+        let response: VersionsResponse = reqwest::get(&versions_url)
             .await?
             .json()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch Hangar versions: {}", e))?;
+
+        let all_versions = response.result;
 
         // Filter by Minecraft version if provided
         let mut versions = if let Some(mc_version) = minecraft_version {
             all_versions
                 .iter()
                 .filter(|v| {
+                    // Check if any platform's dependencies match the Minecraft version
                     v.platform_dependencies
-                        .iter()
-                        .any(|dep| version_matcher::matches_mc_version(&dep.version, mc_version))
+                        .values()
+                        .flatten()
+                        .any(|dep_version| {
+                            version_matcher::matches_mc_version(dep_version, mc_version)
+                        })
                 })
                 .cloned()
                 .collect()
@@ -164,14 +169,19 @@ impl PluginSource for HangarSource {
                 Some(v) => {
                     // Verify compatibility if Minecraft version is specified
                     if let Some(mc_version) = minecraft_version {
-                        let is_compatible = v.platform_dependencies.iter().any(|dep| {
-                            version_matcher::matches_mc_version(&dep.version, mc_version)
-                        });
+                        let is_compatible =
+                            v.platform_dependencies
+                                .values()
+                                .flatten()
+                                .any(|dep_version| {
+                                    version_matcher::matches_mc_version(dep_version, mc_version)
+                                });
                         if !is_compatible {
                             let compatible_versions: Vec<String> = v
                                 .platform_dependencies
-                                .iter()
-                                .map(|d| d.version.clone())
+                                .values()
+                                .flatten()
+                                .cloned()
                                 .collect();
                             anyhow::bail!(
                                 "Plugin '{}/{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
@@ -193,8 +203,9 @@ impl PluginSource for HangarSource {
                     {
                         let compatible_versions: Vec<String> = incompatible_version
                             .platform_dependencies
-                            .iter()
-                            .map(|d| d.version.clone())
+                            .values()
+                            .flatten()
+                            .cloned()
                             .collect();
                         anyhow::bail!(
                             "Plugin '{}/{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
@@ -226,8 +237,9 @@ impl PluginSource for HangarSource {
                             .first()
                             .map(|v| {
                                 v.platform_dependencies
-                                    .iter()
-                                    .map(|d| d.version.clone())
+                                    .values()
+                                    .flatten()
+                                    .cloned()
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             })
@@ -246,22 +258,26 @@ impl PluginSource for HangarSource {
             versions.first().unwrap()
         };
 
-        // Get the primary download (usually the first one, or the one marked as primary)
-        let download = version.downloads.first().ok_or_else(|| {
-            anyhow::anyhow!(
-                "No downloads found for version '{}' of plugin '{}/{}'",
-                version.name,
-                author,
-                slug
-            )
-        })?;
+        // Get the primary download - prefer PAPER platform, fallback to first available
+        let download = version
+            .downloads
+            .get("PAPER")
+            .or_else(|| version.downloads.values().next())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No downloads found for version '{}' of plugin '{}/{}'",
+                    version.name,
+                    author,
+                    slug
+                )
+            })?;
 
         // Use SHA-256 from Hangar API and format as UV-style hash (algorithm:hash)
         let hash = format!("sha256:{}", download.file_info.sha256_hash);
 
         Ok(ResolvedVersion {
             version: version.name.clone(),
-            filename: download.name.clone(),
+            filename: download.file_info.name.clone(),
             url: download.download_url.clone(),
             hash,
         })

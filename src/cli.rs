@@ -101,8 +101,8 @@ pub enum Commands {
     ///
     /// Scans the plugins directory for JAR files, reads plugin.yml from each,
     /// computes SHA-256 hashes, and generates plugins.toml and plugins.lock.
-    /// Attempts to identify each plugin by searching across all sources (Modrinth,
-    /// Hangar, GitHub) in priority order. Plugins found in sources are added with
+    /// Attempts to identify each plugin by searching across all sources
+    /// in priority order. Plugins found in sources are added with
     /// their proper source and ID. Plugins not found in any source are skipped
     /// with a warning.
     ///
