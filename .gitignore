@@ -6,3 +6,18 @@ plugins.toml
 plugins/
 
 test-servers/
+
+# VSCode
+.vscode/settings.json
+.vscode/keybindings.json
+.vscode/*.code-snippets
+.vscode/*.code-workspace
+.vscode/state.vscdb
+.vscode/state.vscdb.backup
+.vscode/extensions.json
+
+# Cursor
+.cursor/plans/
+.cursor/rules/
+
+*.log
