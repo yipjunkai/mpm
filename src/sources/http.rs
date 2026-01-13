@@ -90,29 +90,126 @@ pub async fn download_with_response(url: &str) -> Result<Response> {
 
 /// Extract filename from Content-Disposition header or URL
 pub fn extract_filename(response: &Response, url: &str) -> String {
-    // Try Content-Disposition header first
-    if let Some(filename) = response
+    if let Some(header) = response
         .headers()
         .get("content-disposition")
         .and_then(|h| h.to_str().ok())
-        .and_then(|s| {
-            s.split("filename=")
-                .nth(1)
-                .and_then(|f| f.trim_matches('"').split(';').next())
-                .map(|f| f.trim_matches('"').to_string())
-        })
     {
-        return filename;
+        // Prefer filename*= (RFC 5987) over filename= to avoid MIME-encoded names
+        // Example: filename*=UTF-8''Geyser-Spigot.jar
+        if let Some(filename) = extract_filename_star(header) {
+            return sanitize_filename(&filename);
+        }
+
+        // Fall back to basic filename=
+        if let Some(filename) = extract_filename_basic(header) {
+            return sanitize_filename(&filename);
+        }
     }
 
     // Fall back to extracting from URL
-    url.split('/')
+    let filename = url
+        .split('/')
         .next_back()
         .unwrap_or("download.jar")
         .split('?')
         .next()
         .unwrap_or("download.jar")
-        .to_string()
+        .to_string();
+
+    sanitize_filename(&filename)
+}
+
+/// Extract filename from RFC 5987 filename*= parameter
+/// Format: filename*=UTF-8''encoded-filename or filename*=utf-8'en'encoded-filename
+fn extract_filename_star(header: &str) -> Option<String> {
+    // Find filename*= (case-insensitive)
+    let lower = header.to_lowercase();
+    let pos = lower.find("filename*=")?;
+    let rest = &header[pos + 10..]; // Skip "filename*="
+
+    // Take until semicolon or end
+    let value = rest.split(';').next()?.trim();
+
+    // Parse RFC 5987: charset'language'encoded-value
+    // The encoded-value is percent-encoded
+    let parts: Vec<&str> = value.splitn(3, '\'').collect();
+    if parts.len() >= 3 {
+        // Decode percent-encoding
+        percent_decode(parts[2])
+    } else if parts.len() == 1 {
+        // No encoding specified, just use the value
+        Some(value.trim_matches('"').to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract filename from basic filename= parameter
+fn extract_filename_basic(header: &str) -> Option<String> {
+    // Find filename= but not filename*=
+    let lower = header.to_lowercase();
+
+    // Find all occurrences of "filename=" and pick the one that's not "filename*="
+    let mut search_start = 0;
+    while let Some(pos) = lower[search_start..].find("filename=") {
+        let actual_pos = search_start + pos;
+        // Check if this is filename*= (preceded by *)
+        if actual_pos > 0 && header.as_bytes()[actual_pos - 1] == b'*' {
+            search_start = actual_pos + 9;
+            continue;
+        }
+
+        let rest = &header[actual_pos + 9..]; // Skip "filename="
+        let value = rest.split(';').next()?.trim().trim_matches('"');
+
+        // Skip MIME-encoded values (=?...?=) as they may contain invalid chars
+        if value.starts_with("=?") && value.ends_with("?=") {
+            return None;
+        }
+
+        return Some(value.to_string());
+    }
+
+    None
+}
+
+/// Decode percent-encoded string (RFC 3986)
+fn percent_decode(s: &str) -> Option<String> {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?,
+                16,
+            ) {
+                result.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8(result).ok()
+}
+
+/// Sanitize filename for cross-platform compatibility (especially Windows)
+fn sanitize_filename(filename: &str) -> String {
+    // Windows invalid characters: < > : " / \ | ? *
+    // Also handle control characters (0-31)
+    filename
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect()
 }
 
 /// Check if a response has a specific content type
