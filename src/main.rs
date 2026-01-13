@@ -5,6 +5,7 @@ mod constants;
 mod lockfile;
 mod manifest;
 mod sources;
+mod ui;
 
 use clap::Parser;
 use cli::Cli;

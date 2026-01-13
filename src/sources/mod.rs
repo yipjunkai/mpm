@@ -3,12 +3,22 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+// Core modules
+pub mod source_trait;
+pub mod version_matcher;
+
+// Shared utilities (new)
+pub mod hash;
+pub mod http;
+pub mod search;
+pub mod version_data;
+pub mod version_selector;
+
+// Source implementations
 pub mod github;
 pub mod hangar;
 pub mod modrinth;
-pub mod source_trait;
 pub mod spigot;
-pub mod version_matcher;
 
 pub use github::GitHubSource;
 pub use hangar::HangarSource;

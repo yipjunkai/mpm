@@ -2,7 +2,8 @@
 
 use crate::config;
 use crate::lockfile::{LockedPlugin, Lockfile};
-use log::{debug, error, info, warn};
+use crate::ui;
+use log::debug;
 use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::path::Path;
@@ -17,7 +18,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     let lockfile = match Lockfile::load() {
         Ok(lockfile) => lockfile,
         Err(_) => {
-            error!("Lockfile not found. Run 'pm lock' first.");
+            ui::error("Lockfile not found. Run 'mpm lock' first.");
             return Ok(2);
         }
     };
@@ -25,16 +26,16 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
     // Check if there are any GitHub plugins and warn once about version compatibility
     let has_github_plugins = lockfile.plugin.iter().any(|p| p.source == "github");
     if has_github_plugins {
-        warn!(
+        ui::warning(
             "GitHub source does not support Minecraft version filtering. \
-            Compatibility cannot be verified for GitHub plugins."
+            Compatibility cannot be verified for GitHub plugins.",
         );
     }
 
     let plugins_dir = config::plugins_dir();
 
     if dry_run {
-        info!("[DRY RUN] Previewing sync changes...");
+        ui::status("[DRY RUN]", "Previewing sync changes...");
     }
 
     let staging_dir = format!("{}/.plugins.staging", plugins_dir);
@@ -42,13 +43,13 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
 
     // Clean up any leftover staging/backup directories
     if !dry_run && let Err(e) = cleanup_temp_dirs(&plugins_dir) {
-        error!("Failed to cleanup temp directories: {}", e);
+        ui::error(&format!("Failed to cleanup temp directories: {}", e));
         return Ok(2);
     }
 
     // Create staging directory
     if !dry_run && let Err(e) = fs::create_dir_all(&staging_dir) {
-        error!("Failed to create staging directory: {}", e);
+        ui::error(&format!("Failed to create staging directory: {}", e));
         return Ok(2);
     }
 
@@ -57,7 +58,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         match create_backup(&plugins_dir, &backup_dir) {
             Ok(created) => created,
             Err(e) => {
-                error!("Failed to create backup: {}", e);
+                ui::error(&format!("Failed to create backup: {}", e));
                 return Ok(2);
             }
         }
@@ -102,12 +103,10 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         // Download files that need updating
         for plugin in files_to_download {
             if dry_run {
-                info!("  → Would download and verify {}", plugin.name);
+                ui::action(&format!("Would download {}", plugin.name));
             } else {
                 let staging_path = Path::new(&staging_dir).join(&plugin.file);
-                info!("  → Downloading {}...", plugin.name);
-                download_and_verify(plugin, &staging_path).await?;
-                info!("  ✓ {} verified", plugin.name);
+                download_and_verify_with_progress(plugin, &staging_path).await?;
             }
         }
 
@@ -126,7 +125,7 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
                         && filename.ends_with(".jar")
                         && !managed_files.contains(filename)
                     {
-                        info!("  → Would remove unmanaged file: {}", filename);
+                        ui::action(&format!("Would remove unmanaged file: {}", filename));
                         has_changes = true;
                     }
                 }
@@ -151,14 +150,14 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
         Ok(changes) => changes,
         Err(e) => {
             // Error occurred - cleanup and return exit code 2
-            error!("{}", e);
+            ui::error(&e.to_string());
 
             // Cleanup and restore on error
             if !dry_run
                 && needs_restore
                 && let Err(restore_err) = restore_backup(&plugins_dir, &backup_dir)
             {
-                warn!("Failed to restore backup: {}", restore_err);
+                ui::warning(&format!("Failed to restore backup: {}", restore_err));
             }
 
             // Clean up staging and backup directories
@@ -172,16 +171,16 @@ pub async fn sync_plugins(dry_run: bool) -> anyhow::Result<i32> {
 
     // Clean up staging and backup directories
     if !dry_run && let Err(e) = cleanup_temp_dirs(&plugins_dir) {
-        warn!("Failed to cleanup temp directories: {}", e);
+        ui::warning(&format!("Failed to cleanup temp directories: {}", e));
         // Don't fail on cleanup, but log it
     }
 
     if dry_run {
-        info!("[DRY RUN] Would sync {} plugin(s)", lockfile.plugin.len());
+        ui::dim(&format!("Would sync {} plugin(s)", lockfile.plugin.len()));
         // Return exit code: 0 = no changes, 1 = changes detected
         Ok(if has_changes { 1 } else { 0 })
     } else {
-        info!("Synced {} plugin(s)", lockfile.plugin.len());
+        ui::success(&format!("Synced {} plugin(s)", lockfile.plugin.len()));
         Ok(0) // Success
     }
 }
@@ -204,10 +203,32 @@ pub fn verify_plugin_hash(file_path: &Path, algorithm: &str) -> anyhow::Result<S
     Ok(format!("{}:{}", algorithm, hash_hex))
 }
 
-async fn download_and_verify(plugin: &LockedPlugin, target_path: &Path) -> anyhow::Result<()> {
+async fn download_and_verify_with_progress(
+    plugin: &LockedPlugin,
+    target_path: &Path,
+) -> anyhow::Result<()> {
+    // Create spinner for download
+    let pb = ui::spinner(&format!("Downloading {}...", plugin.name));
+
     // Download file
     let response = reqwest::get(&plugin.url).await?;
+
+    // Get content length for progress (if available)
+    let total_size = response.content_length();
+
+    // Update progress bar if we have size info
+    if let Some(size) = total_size {
+        pb.set_length(size);
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("{spinner:.cyan} {msg} [{bar:25.cyan/dim}] {bytes}/{total_bytes}")
+                .unwrap()
+                .progress_chars("━━╺"),
+        );
+    }
+
     let data = response.bytes().await?;
+    pb.set_position(data.len() as u64);
 
     // Parse hash to get algorithm and expected hash
     let (algorithm, expected_hash) = plugin.parse_hash()?;
@@ -224,11 +245,15 @@ async fn download_and_verify(plugin: &LockedPlugin, target_path: &Path) -> anyho
             hasher.update(&data);
             hex::encode(hasher.finalize())
         }
-        _ => anyhow::bail!("Unsupported hash algorithm: {}", algorithm),
+        _ => {
+            ui::finish_spinner_error(&pb, &format!("{}: unsupported hash algorithm", plugin.name));
+            anyhow::bail!("Unsupported hash algorithm: {}", algorithm);
+        }
     };
 
     // Compare computed hash with expected hash
     if computed_hash != expected_hash {
+        ui::finish_spinner_error(&pb, &format!("{}: hash mismatch", plugin.name));
         anyhow::bail!(
             "Hash mismatch for {}: expected {}:{}, got {}:{}",
             plugin.name,
@@ -244,6 +269,8 @@ async fn download_and_verify(plugin: &LockedPlugin, target_path: &Path) -> anyho
         fs::create_dir_all(parent)?;
     }
     fs::write(target_path, &data)?;
+
+    ui::finish_download_success(&pb, &plugin.name);
 
     Ok(())
 }
@@ -280,7 +307,7 @@ fn restore_backup(plugins_dir: &str, backup_dir: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    info!("Restoring from backup...");
+    ui::action("Restoring from backup...");
 
     // Remove current .jar files
     let plugins_path = Path::new(plugins_dir);
@@ -387,7 +414,7 @@ fn remove_unmanaged_files(
             {
                 // Only remove .jar files that aren't managed
                 if filename.ends_with(".jar") && !managed_files.contains(filename) {
-                    info!("  → Removing unmanaged file: {}", filename);
+                    ui::action(&format!("Removing unmanaged file: {}", filename));
                     fs::remove_file(&path)?;
                     removed_any = true;
                 }

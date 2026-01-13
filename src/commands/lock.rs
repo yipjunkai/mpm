@@ -3,16 +3,16 @@
 use crate::lockfile::{LockedPlugin, Lockfile};
 use crate::manifest::Manifest;
 use crate::sources::REGISTRY;
-use log::{info, warn};
+use crate::ui;
 use toml;
 
 pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
     // Load manifest
     let manifest = Manifest::load()
-        .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
+        .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'mpm init' first."))?;
 
     if dry_run {
-        info!("[DRY RUN] Previewing lock changes...");
+        ui::status("[DRY RUN]", "Previewing lock changes...");
     }
 
     let mut lockfile = Lockfile::new();
@@ -24,30 +24,46 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
         .values()
         .any(|spec| spec.source == "github");
     if has_github_plugins && minecraft_version.is_some() {
-        warn!(
+        ui::warning(
             "GitHub source does not support Minecraft version filtering. \
-            Compatibility cannot be verified for GitHub plugins."
+            Compatibility cannot be verified for GitHub plugins.",
         );
     }
 
     // For each plugin, resolve version
     for (name, plugin_spec) in manifest.plugins.iter() {
-        info!("Resolving {}...", name);
+        let spinner = ui::spinner(&format!("Resolving {}...", name));
 
         // Get the source implementation
-        let source = REGISTRY.get_or_error(&plugin_spec.source)?;
+        let source = match REGISTRY.get_or_error(&plugin_spec.source) {
+            Ok(s) => s,
+            Err(e) => {
+                ui::finish_spinner_error(&spinner, &format!("{}: {}", name, e));
+                return Err(e);
+            }
+        };
 
         // Validate plugin ID format
-        source.validate_plugin_id(&plugin_spec.id)?;
+        if let Err(e) = source.validate_plugin_id(&plugin_spec.id) {
+            ui::finish_spinner_error(&spinner, &format!("{}: {}", name, e));
+            return Err(e);
+        }
 
         // Resolve version using the trait
-        let resolved = source
+        let resolved = match source
             .resolve_version(
                 &plugin_spec.id,
                 plugin_spec.version.as_deref(),
                 minecraft_version,
             )
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                ui::finish_spinner_error(&spinner, &format!("{}: {}", name, e));
+                return Err(e);
+            }
+        };
 
         lockfile.add_plugin(LockedPlugin {
             name: name.clone(),
@@ -58,7 +74,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
             hash: resolved.hash.clone(),
         });
 
-        info!("  → {} {}", name, resolved.version);
+        ui::finish_spinner_resolved(&spinner, name, &resolved.version);
     }
 
     // Sort plugins by name
@@ -69,7 +85,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
     // 1 = warnings only (changes detected in dry-run)
     // 2 = errors present
     if dry_run {
-        info!("[DRY RUN] Would lock {} plugin(s)", lockfile.plugin.len());
+        ui::dim(&format!("Would lock {} plugin(s)", lockfile.plugin.len()));
 
         // Check if lockfile would change by comparing with existing lockfile
         let exit_code = match Lockfile::load() {
@@ -91,7 +107,7 @@ pub async fn lock(dry_run: bool) -> anyhow::Result<i32> {
         Ok(exit_code)
     } else {
         lockfile.save()?;
-        info!("Locked {} plugin(s)", lockfile.plugin.len());
+        ui::success(&format!("Locked {} plugin(s)", lockfile.plugin.len()));
         Ok(0) // Success
     }
 }

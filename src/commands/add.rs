@@ -3,8 +3,9 @@
 use crate::commands::lock;
 use crate::manifest::{Manifest, PluginSpec};
 use crate::sources::REGISTRY;
+use crate::ui;
 use futures::future::join_all;
-use log::{debug, info};
+use log::debug;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -31,7 +32,7 @@ pub async fn add(spec: String, no_update: bool, skip_compatibility: bool) -> any
 
     // Load existing manifest
     let mut manifest = Manifest::load()
-        .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'pm init' first."))?;
+        .map_err(|_| anyhow::anyhow!("Manifest not found. Run 'mpm init' first."))?;
 
     let minecraft_version = if skip_compatibility {
         None
@@ -46,6 +47,8 @@ pub async fn add(spec: String, no_update: bool, skip_compatibility: bool) -> any
         (source_str, source_impl)
     } else {
         // Search through all sources in parallel with timeout
+        let spinner = ui::spinner(&format!("Searching for {}...", id));
+
         let sources = REGISTRY.get_priority_order();
         let timeout_duration = Duration::from_secs(180); // 3 minutes
 
@@ -99,6 +102,7 @@ pub async fn add(spec: String, no_update: bool, skip_compatibility: bool) -> any
             match result {
                 Ok((source_name, plugin_id)) => {
                     debug!("Found plugin '{}' in source '{}'", plugin_id, source_name);
+                    ui::clear_bar(&spinner);
                     return add_plugin_to_manifest(
                         &mut manifest,
                         source_name,
@@ -115,6 +119,7 @@ pub async fn add(spec: String, no_update: bool, skip_compatibility: bool) -> any
         }
 
         // If we get here, plugin wasn't found in any source
+        ui::finish_spinner_error(&spinner, &format!("{} not found", id));
         let error_msg = if let Some((last_source, last_err)) = errors.first() {
             format!(
                 "Plugin '{}' not found in any source. Last attempted source '{}': {}",
@@ -164,7 +169,7 @@ async fn add_plugin_to_manifest(
     );
 
     manifest.save()?;
-    info!("Added plugin '{}' from source '{}'", plugin_name, source);
+    ui::success(&format!("Added {} from {}", plugin_name, source));
 
     // Automatically lock after adding unless --no-update is specified
     if !no_update {

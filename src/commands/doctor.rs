@@ -5,7 +5,7 @@ use crate::config;
 use crate::constants;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
-use log::info;
+use crate::ui;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -323,58 +323,59 @@ fn check_plugins(plugins_dir: &str, lockfile: &Lockfile) -> (PluginsInfo, Vec<Is
     )
 }
 
+#[allow(clippy::print_stdout)]
 fn output_human_readable(output: &DoctorOutput) {
     // 1. Manifest section
-    info!("Manifest (plugins.toml)");
+    println!("Manifest (plugins.toml)");
     if output.manifest.present && output.manifest.valid {
-        info!("  ✓ Present and valid");
+        ui::success("  Present and valid");
     } else if output.manifest.present {
-        info!("  ✗ Present but invalid");
+        ui::error("  Present but invalid");
     } else {
-        info!("  ✗ Not found");
+        ui::error("  Not found");
     }
 
     // 2. Lockfile section
-    info!("\nLockfile (plugins.lock)");
+    println!("\nLockfile (plugins.lock)");
     if output.lockfile.present && output.lockfile.valid {
-        info!("  ✓ Present and valid");
+        ui::success("  Present and valid");
     } else if output.lockfile.present {
-        info!("  ✗ Present but invalid");
+        ui::error("  Present but invalid");
     } else {
-        info!("  ✗ Not found");
+        ui::error("  Not found");
     }
 
     // 3. Plugins directory section
     let plugins_dir_path = config::plugins_dir();
-    info!("\nPlugins directory ({})", plugins_dir_path);
+    println!("\nPlugins directory ({})", plugins_dir_path);
     if output.plugins.directory_present {
-        info!("  ✓ Directory exists");
-        info!(
+        ui::success("  Directory exists");
+        ui::dim(&format!(
             "  Installed: {} / Expected: {}",
             output.plugins.installed, output.plugins.expected
-        );
+        ));
 
         if !output.plugins.missing.is_empty() {
             for plugin_name in &output.plugins.missing {
-                info!("  ✗ Missing: {}", plugin_name);
+                ui::error(&format!("  Missing: {}", plugin_name));
             }
         }
         if !output.plugins.hash_mismatch.is_empty() {
             for plugin_name in &output.plugins.hash_mismatch {
-                info!("  ✗ Hash mismatch: {}", plugin_name);
+                ui::error(&format!("  Hash mismatch: {}", plugin_name));
             }
         }
         if !output.plugins.unmanaged.is_empty() {
             for filename in &output.plugins.unmanaged {
-                info!("  ⚠ Unmanaged: {}", filename);
+                ui::warning(&format!("  Unmanaged: {}", filename));
             }
         }
     } else {
-        info!("  ✗ Directory not found");
+        ui::error("  Directory not found");
     }
 
     // 4. Summary
-    info!("\nSummary");
+    println!("\nSummary");
     let error_count = output
         .issues
         .iter()
@@ -387,13 +388,13 @@ fn output_human_readable(output: &DoctorOutput) {
         .count();
 
     if error_count > 0 {
-        info!("  ✗ {} error(s)", error_count);
+        ui::error(&format!("  {} error(s)", error_count));
     }
     if warning_count > 0 {
-        info!("  ⚠ {} warning(s)", warning_count);
+        ui::warning(&format!("  {} warning(s)", warning_count));
     }
     if error_count == 0 && warning_count == 0 {
-        info!("  ✓ No issues");
+        ui::success("  No issues");
     }
 
     // Status line
@@ -402,5 +403,5 @@ fn output_human_readable(output: &DoctorOutput) {
         "warning" => "warnings",
         _ => "healthy",
     };
-    info!("\nStatus: {}", status_label);
+    println!("\nStatus: {}", status_label);
 }

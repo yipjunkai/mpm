@@ -1,37 +1,29 @@
 // Spigot source implementation (via Spiget API)
 
+use crate::sources::hash::{self, HashAlgorithm};
+use crate::sources::http;
+use crate::sources::search::{self, Searchable};
 use crate::sources::source_trait::{PluginSource, ResolvedVersion};
-use crate::sources::version_matcher;
+use crate::sources::version_data::{DownloadInfo, NormalizedVersion};
+use crate::sources::version_selector::{self, SelectionConfig};
 use async_trait::async_trait;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
 struct ResourceFile {
-    #[allow(dead_code)] // May be useful for future enhancements
-    #[serde(rename = "type")]
-    file_type: Option<String>,
     #[serde(rename = "externalUrl")]
     external_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Resource {
-    #[allow(dead_code)] // Required for deserialization but not used
     id: i64,
     name: String,
-    #[serde(rename = "testedVersions")]
-    #[allow(dead_code)] // Used in filtering but may not always be present
-    tested_versions: Option<Vec<String>>,
     file: Option<ResourceFile>,
 }
 
-// Spiget search API returns an array directly, not an object
-type SearchResponse = Vec<Resource>;
-
 #[derive(Debug, Clone, Deserialize)]
 struct Version {
-    #[allow(dead_code)] // Required for deserialization but not used
     id: i64,
     name: String,
     #[serde(rename = "releaseDate")]
@@ -40,7 +32,189 @@ struct Version {
     tested_versions: Option<Vec<String>>,
 }
 
+// Implement Searchable for Resource
+impl Searchable for Resource {
+    fn search_name(&self) -> &str {
+        &self.name
+    }
+}
+
 pub struct SpigotSource;
+
+impl SpigotSource {
+    /// Normalize a Spiget API version to our common format
+    fn normalize_version(v: &Version, resource_id: i64) -> NormalizedVersion {
+        let download_url = format!(
+            "https://api.spiget.org/v2/resources/{}/versions/{}/download",
+            resource_id, v.id
+        );
+
+        NormalizedVersion {
+            version: v.name.clone(),
+            published_at: v.release_date.to_string(),
+            mc_versions: v.tested_versions.clone().unwrap_or_default(),
+            download: DownloadInfo::without_hash(&download_url, None),
+        }
+    }
+
+    /// Fetch versions from the Spiget API
+    async fn fetch_versions(resource_id: i64) -> anyhow::Result<Vec<NormalizedVersion>> {
+        let url = format!(
+            "https://api.spiget.org/v2/resources/{}/versions?size=1000",
+            resource_id
+        );
+
+        let versions: Vec<Version> = http::fetch_json(&url).await?;
+        Ok(versions
+            .iter()
+            .map(|v| Self::normalize_version(v, resource_id))
+            .collect())
+    }
+
+    /// Search for a resource by name with hyphen variations
+    async fn search_resource(&self, search_name: &str) -> anyhow::Result<Resource> {
+        // Try the original search name first
+        let mut search_terms = vec![search_name.to_string()];
+
+        // If the search name contains hyphens, also try with spaces instead
+        if search_name.contains('-') {
+            search_terms.push(search_name.replace('-', " "));
+        }
+
+        // Try each search term variation
+        for search_term in &search_terms {
+            let search_url = format!(
+                "https://api.spiget.org/v2/search/resources/{}?size=100",
+                urlencoding::encode(search_term)
+            );
+
+            let response = http::client().get(&search_url).send().await?;
+            if !response.status().is_success() {
+                continue;
+            }
+
+            let results: Vec<Resource> = response.json().await?;
+            if !results.is_empty() {
+                return self.process_search_results(results, search_name);
+            }
+        }
+
+        anyhow::bail!("No resources found matching '{}' in Spigot", search_name);
+    }
+
+    /// Process search results and return the best match
+    fn process_search_results(
+        &self,
+        mut results: Vec<Resource>,
+        search_name: &str,
+    ) -> anyhow::Result<Resource> {
+        search::rank_search_results(&mut results, search_name);
+        Ok(results.into_iter().next().unwrap())
+    }
+
+    /// Parse plugin ID and resolve to resource ID
+    async fn resolve_resource_id(&self, plugin_id: &str) -> anyhow::Result<(i64, Option<String>)> {
+        if plugin_id.chars().all(|c| c.is_ascii_digit()) {
+            // Numeric ID format
+            let id = plugin_id.parse::<i64>().map_err(|_| {
+                anyhow::anyhow!("Invalid Spigot resource ID format: '{}'", plugin_id)
+            })?;
+            Ok((id, None))
+        } else {
+            // Name format - search for it
+            let resource = self.search_resource(plugin_id).await?;
+            let external_url = resource.file.and_then(|f| f.external_url);
+            Ok((resource.id, external_url))
+        }
+    }
+
+    /// Download and hash the resource, handling external URL fallback
+    async fn download_with_hash(
+        resource_id: i64,
+        version: &NormalizedVersion,
+        external_url: Option<&str>,
+    ) -> anyhow::Result<ResolvedVersion> {
+        let download_url = &version.download.url;
+
+        // Try the Spiget download endpoint first
+        let mut response = http::download_with_response(download_url).await?;
+
+        // If the download failed, try external URL as fallback
+        let mut final_url = download_url.clone();
+        if !response.status().is_success() {
+            if let Some(ext_url) = external_url {
+                let external_response = http::download_with_response(ext_url).await?;
+
+                if !external_response.status().is_success() {
+                    anyhow::bail!(
+                        "Failed to download resource '{}' version '{}' from external URL '{}': HTTP {}",
+                        resource_id,
+                        version.version,
+                        ext_url,
+                        external_response.status()
+                    );
+                }
+
+                // Check if the response is actually a JAR file
+                let content_type = http::get_content_type(&external_response).unwrap_or_default();
+                let is_jar_file = content_type.starts_with("application/java-archive")
+                    || content_type.starts_with("application/x-java-archive")
+                    || ext_url.ends_with(".jar");
+
+                if !is_jar_file {
+                    anyhow::bail!(
+                        "External URL '{}' for resource '{}' version '{}' does not point to a JAR file (Content-Type: {}). \
+                        Please ensure the external URL points directly to a .jar file download.",
+                        ext_url,
+                        resource_id,
+                        version.version,
+                        if content_type.is_empty() {
+                            "not specified"
+                        } else {
+                            &content_type
+                        }
+                    );
+                }
+
+                response = external_response;
+                final_url = ext_url.to_string();
+            } else {
+                // Check if it's a 403 and no external URL was available
+                if response.status() == reqwest::StatusCode::FORBIDDEN {
+                    anyhow::bail!(
+                        "SpigotMC uses Cloudflare protection that blocks automated downloads, and this resource doesn't have an external download URL. \
+                        Please download the plugin manually from https://www.spigotmc.org/resources/{}/ and add it to your server.",
+                        resource_id
+                    );
+                }
+                anyhow::bail!(
+                    "Failed to download resource '{}' version '{}': HTTP {}",
+                    resource_id,
+                    version.version,
+                    response.status()
+                );
+            }
+        }
+
+        // Extract filename and compute hash
+        let filename = http::extract_filename(&response, &final_url);
+        let filename = if filename.is_empty() || filename == "download.jar" {
+            format!("{}.jar", version.version)
+        } else {
+            filename
+        };
+
+        let data = response.bytes().await?;
+        let hash_str = hash::compute_hash(&data, HashAlgorithm::Sha256);
+
+        Ok(ResolvedVersion {
+            version: version.version.clone(),
+            filename,
+            url: final_url,
+            hash: hash_str,
+        })
+    }
+}
 
 #[async_trait]
 impl PluginSource for SpigotSource {
@@ -49,11 +223,9 @@ impl PluginSource for SpigotSource {
     }
 
     fn validate_plugin_id(&self, plugin_id: &str) -> anyhow::Result<()> {
-        // Spigot accepts numeric resource IDs or plugin names (for search)
         if plugin_id.is_empty() {
             anyhow::bail!("Spigot plugin ID cannot be empty");
         }
-        // Allow both formats: numeric ID (e.g., "1234") or name (for search)
         Ok(())
     }
 
@@ -63,360 +235,45 @@ impl PluginSource for SpigotSource {
         requested_version: Option<&str>,
         minecraft_version: Option<&str>,
     ) -> anyhow::Result<ResolvedVersion> {
-        // Parse plugin_id - could be numeric ID or name (for search)
-        let resource_id = if plugin_id.chars().all(|c| c.is_ascii_digit()) {
-            // Numeric ID format
-            plugin_id.parse::<i64>().map_err(|_| {
-                anyhow::anyhow!("Invalid Spigot resource ID format: '{}'", plugin_id)
-            })?
-        } else {
-            // Name format - search for it
-            let search_name = plugin_id;
-            let found_resource = self.search_resource(search_name).await?;
-            found_resource.id
-        };
+        // Resolve plugin ID to resource ID
+        let (resource_id, external_url) = self.resolve_resource_id(plugin_id).await?;
 
-        // Get resource info to verify it exists
+        // Verify resource exists
         let resource_url = format!("https://api.spiget.org/v2/resources/{}", resource_id);
-        let response = reqwest::get(&resource_url).await?;
-
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            anyhow::bail!("Resource '{}' not found in Spigot", resource_id);
-        }
-
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "Failed to fetch Spigot resource '{}': HTTP {}",
-                resource_id,
-                response.status()
-            );
-        }
-
-        let resource: Resource = response
-            .json()
+        let resource: Resource = http::fetch_json(&resource_url)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse Spigot resource response: {}", e))?;
+            .map_err(|_| anyhow::anyhow!("Resource '{}' not found in Spigot", resource_id))?;
 
-        // Get all versions
-        let versions_url = format!(
-            "https://api.spiget.org/v2/resources/{}/versions?size=1000",
-            resource_id
-        );
-        let all_versions: Vec<Version> = reqwest::get(&versions_url)
-            .await?
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch Spigot versions: {}", e))?;
+        // Get external URL from resource if not already have it
+        let external_url = external_url.or_else(|| resource.file.and_then(|f| f.external_url));
 
-        if all_versions.is_empty() {
+        // Fetch all versions
+        let versions = Self::fetch_versions(resource_id).await?;
+
+        if versions.is_empty() {
             anyhow::bail!("No versions found for resource '{}'", resource_id);
         }
 
-        // Filter by Minecraft version if provided
-        let mut versions = if let Some(mc_version) = minecraft_version {
-            all_versions
-                .iter()
-                .filter(|v| {
-                    v.tested_versions
-                        .as_ref()
-                        .map(|tvs| {
-                            if tvs.is_empty() {
-                                // If tested_versions is empty, include the version
-                                // (many Spigot plugins don't properly fill this field)
-                                true
-                            } else {
-                                tvs.iter()
-                                    .any(|tv| version_matcher::matches_mc_version(tv, mc_version))
-                            }
-                        })
-                        .unwrap_or(true) // If tested_versions is None, include the version
-                })
-                .cloned()
-                .collect()
-        } else {
-            all_versions.clone()
-        };
+        // Use version selector with treat_empty_as_compatible for Spigot
+        // (many Spigot plugins don't properly fill tested_versions)
+        let config = SelectionConfig::new(resource_id.to_string()).treat_empty_as_compatible();
 
-        let version = if let Some(version_str) = requested_version {
-            // Find the specific version in filtered results
-            let found_version = versions.iter().find(|v| v.name == version_str);
+        // Find the selected version first
+        let selected = version_selector::select_version(
+            versions.clone(),
+            requested_version,
+            minecraft_version,
+            &config,
+        )
+        .await?;
 
-            match found_version {
-                Some(v) => {
-                    // Verify compatibility if Minecraft version is specified
-                    if let Some(mc_version) = minecraft_version {
-                        let is_compatible = v
-                            .tested_versions
-                            .as_ref()
-                            .map(|tvs| {
-                                if tvs.is_empty() {
-                                    // If tested_versions is empty, consider it compatible
-                                    // (many Spigot plugins don't properly fill this field)
-                                    true
-                                } else {
-                                    tvs.iter().any(|tv| {
-                                        version_matcher::matches_mc_version(tv, mc_version)
-                                    })
-                                }
-                            })
-                            .unwrap_or(true); // If tested_versions is None, consider it compatible
-                        if !is_compatible {
-                            let compatible_versions = v
-                                .tested_versions
-                                .as_ref()
-                                .map(|tvs| tvs.join(", "))
-                                .unwrap_or_else(|| "unknown".to_string());
-                            anyhow::bail!(
-                                "Resource '{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
-                                resource_id,
-                                version_str,
-                                mc_version,
-                                compatible_versions
-                            );
-                        }
-                    }
-                    v
-                }
-                None => {
-                    // Check if version exists but is incompatible
-                    if let Some(mc_version) = minecraft_version
-                        && let Some(incompatible_version) =
-                            all_versions.iter().find(|v| v.name == version_str)
-                    {
-                        let compatible_versions = incompatible_version
-                            .tested_versions
-                            .as_ref()
-                            .map(|tvs| tvs.join(", "))
-                            .unwrap_or_else(|| "unknown".to_string());
-                        anyhow::bail!(
-                            "Resource '{}' version '{}' is not compatible with Minecraft {}. Compatible versions: {}",
-                            resource_id,
-                            version_str,
-                            mc_version,
-                            compatible_versions
-                        );
-                    }
-                    anyhow::bail!(
-                        "Version '{}' not found for resource '{}'",
-                        version_str,
-                        resource_id
-                    )
-                }
-            }
-        } else {
-            // Get the latest compatible version
-            if versions.is_empty() {
-                if let Some(mc_version) = minecraft_version {
-                    let latest_compatible = all_versions
-                        .first()
-                        .and_then(|v| v.tested_versions.as_ref().map(|tvs| tvs.join(", ")))
-                        .unwrap_or_else(|| "unknown".to_string());
-                    anyhow::bail!(
-                        "No versions of resource '{}' are compatible with Minecraft {}. Latest version supports: {}",
-                        resource_id,
-                        mc_version,
-                        latest_compatible
-                    );
-                } else {
-                    anyhow::bail!("No versions found for resource '{}'", resource_id);
-                }
-            }
+        // Find the matching normalized version for download
+        let normalized_version = versions
+            .iter()
+            .find(|v| v.version == selected.version)
+            .ok_or_else(|| anyhow::anyhow!("Version not found after selection"))?;
 
-            // Sort by release_date descending to ensure determinism
-            versions.sort_by(|a, b| {
-                // Sort by release_date descending (newest first)
-                b.release_date.cmp(&a.release_date)
-            });
-            versions.first().unwrap()
-        };
-
-        // Spiget API doesn't provide hashes, so we need to download and compute SHA-256
-        // First, try the Spiget download endpoint
-        let download_url = format!(
-            "https://api.spiget.org/v2/resources/{}/versions/{}/download",
-            resource_id, version.id
-        );
-
-        let mut response = reqwest::get(&download_url).await?;
-
-        // If the download failed, try external URL as fallback
-        let mut used_external_url = false;
-        let mut final_url = download_url.clone();
-        if !response.status().is_success()
-            && let Some(file) = &resource.file
-            && let Some(external_url) = &file.external_url
-        {
-            // Try external URL directly
-            let external_response = reqwest::get(external_url).await?;
-
-            if !external_response.status().is_success() {
-                anyhow::bail!(
-                    "Failed to download resource '{}' version '{}' from external URL '{}': HTTP {}",
-                    resource_id,
-                    version.name,
-                    external_url,
-                    external_response.status()
-                );
-            }
-
-            // Check if the response is actually a JAR file
-            // Only accept application/java-archive or application/x-java-archive content types
-            // Or if URL ends with .jar (and we'll verify it's actually a JAR when we download it)
-            let content_type = external_response
-                .headers()
-                .get("content-type")
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("")
-                .to_lowercase();
-
-            let is_jar_file = content_type.starts_with("application/java-archive")
-                || content_type.starts_with("application/x-java-archive")
-                || external_url.ends_with(".jar"); // If URL ends with .jar, assume it's a JAR file
-
-            if !is_jar_file {
-                anyhow::bail!(
-                    "External URL '{}' for resource '{}' version '{}' does not point to a JAR file (Content-Type: {}). \
-                    Please ensure the external URL points directly to a .jar file download.",
-                    external_url,
-                    resource_id,
-                    version.name,
-                    if content_type.is_empty() {
-                        "not specified"
-                    } else {
-                        &content_type
-                    }
-                );
-            }
-
-            // External URL looks good, use it
-            response = external_response;
-            used_external_url = true;
-            final_url = external_url.clone();
-        }
-
-        if !response.status().is_success() {
-            // Check if it's a 403 and no external URL was available
-            if response.status() == reqwest::StatusCode::FORBIDDEN {
-                let has_external = resource
-                    .file
-                    .as_ref()
-                    .and_then(|f| f.external_url.as_ref())
-                    .is_some();
-                if !has_external {
-                    anyhow::bail!(
-                        "SpigotMC uses Cloudflare protection that blocks automated downloads, and this resource doesn't have an external download URL. \
-                        Please download the plugin manually from https://www.spigotmc.org/resources/{}/ and add it to your server.",
-                        resource_id
-                    );
-                }
-            }
-            anyhow::bail!(
-                "Failed to download resource '{}' version '{}': HTTP {}",
-                resource_id,
-                version.name,
-                response.status()
-            );
-        }
-
-        // Get filename from Content-Disposition header before consuming response
-        let filename = response
-            .headers()
-            .get("content-disposition")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| {
-                s.split("filename=")
-                    .nth(1)
-                    .and_then(|f| f.trim_matches('"').split(';').next())
-                    .map(|f| f.trim_matches('"').to_string())
-            })
-            .unwrap_or_else(|| format!("{}.jar", version.name));
-
-        let data = response.bytes().await?;
-
-        // Compute SHA-256 hash
-        let mut hasher = Sha256::new();
-        hasher.update(&data);
-        let hash_hex = hex::encode(hasher.finalize());
-        let hash = format!("sha256:{}", hash_hex);
-
-        Ok(ResolvedVersion {
-            version: version.name.clone(),
-            filename,
-            url: if used_external_url {
-                final_url
-            } else {
-                download_url
-            },
-            hash,
-        })
-    }
-}
-
-impl SpigotSource {
-    /// Search for a resource by name and return the best match (exact name match, case-insensitive)
-    async fn search_resource(&self, search_name: &str) -> anyhow::Result<Resource> {
-        // Try the original search name first
-        let mut search_terms = vec![search_name.to_string()];
-
-        // If the search name contains hyphens, also try with spaces instead
-        if search_name.contains('-') {
-            let spaced_version = search_name.replace('-', " ");
-            search_terms.push(spaced_version);
-        }
-
-        // Try each search term variation
-        for search_term in &search_terms {
-            let search_url = format!(
-                "https://api.spiget.org/v2/search/resources/{}?size=100",
-                urlencoding::encode(search_term)
-            );
-            let response = reqwest::get(&search_url).await?;
-
-            if !response.status().is_success() {
-                continue; // Try next variation
-            }
-
-            let search_result: SearchResponse = response.json().await?;
-
-            if !search_result.is_empty() {
-                // Found results with this search term, process them
-                return self.process_search_results(search_result, search_name);
-            }
-        }
-
-        // If we get here, no search terms returned results
-        anyhow::bail!("No resources found matching '{}' in Spigot", search_name);
-    }
-
-    /// Process search results and return the best match
-    fn process_search_results(
-        &self,
-        mut search_result: SearchResponse,
-        original_search_name: &str,
-    ) -> anyhow::Result<Resource> {
-        // Sort by exact name match (case-insensitive)
-        // Exact matches first, then partial matches
-        search_result.sort_by(|a, b| {
-            let a_name_lower = a.name.to_lowercase();
-            let b_name_lower = b.name.to_lowercase();
-            let search_lower = original_search_name.to_lowercase();
-            let search_spaced = search_lower.replace('-', " ");
-
-            // Exact match gets highest priority (check both hyphenated and spaced versions)
-            let a_exact = a_name_lower == search_lower || a_name_lower == search_spaced;
-            let b_exact = b_name_lower == search_lower || b_name_lower == search_spaced;
-
-            match (a_exact, b_exact) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    // If both or neither are exact, sort by name
-                    a_name_lower.cmp(&b_name_lower)
-                }
-            }
-        });
-
-        // Return the first (best) match
-        Ok(search_result.into_iter().next().unwrap())
+        // Now download with hash computation
+        Self::download_with_hash(resource_id, normalized_version, external_url.as_deref()).await
     }
 }
